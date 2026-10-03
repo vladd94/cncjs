@@ -14,33 +14,35 @@ const LandingView = ({ actions }) => {
         </p>
       </div>
 
-      <button
-        type="button"
-        className={styles.pathCard}
-        onClick={actions.startNewProbe}
-      >
-        <div className={styles.pathMeta}>
-          <div className={styles.pathTitle}>{i18n._('Probe new surface')}</div>
-          <div className={styles.pathDescription}>
-            {i18n._('Set the probe area and capture a height map for this fixture.')}
+      <div className={styles.pathRow}>
+        <button
+          type="button"
+          className={styles.pathCard}
+          onClick={actions.startNewProbe}
+        >
+          <div className={styles.pathMeta}>
+            <div className={styles.pathTitle}>{i18n._('Probe new surface')}</div>
+            <div className={styles.pathDescription}>
+              {i18n._('Set the probe area and capture a height map for this fixture.')}
+            </div>
           </div>
-        </div>
-        <span className={styles.pathAction} aria-hidden="true">→</span>
-      </button>
+          <span className={styles.pathAction} aria-hidden="true">→</span>
+        </button>
 
-      <button
-        type="button"
-        className={styles.pathCard}
-        onClick={actions.loadProbeFile}
-      >
-        <div className={styles.pathMeta}>
-          <div className={styles.pathTitle}>{i18n._('Apply compensation')}</div>
-          <div className={styles.pathDescription}>
-            {i18n._('Load a probe map and correct G-code before you cut.')}
+        <button
+          type="button"
+          className={styles.pathCard}
+          onClick={actions.loadProbeFile}
+        >
+          <div className={styles.pathMeta}>
+            <div className={styles.pathTitle}>{i18n._('Apply compensation')}</div>
+            <div className={styles.pathDescription}>
+              {i18n._('Load a probe map and correct G-code before you cut.')}
+            </div>
           </div>
-        </div>
-        <span className={styles.pathAction} aria-hidden="true">→</span>
-      </button>
+          <span className={styles.pathAction} aria-hidden="true">→</span>
+        </button>
+      </div>
     </div>
   );
 };

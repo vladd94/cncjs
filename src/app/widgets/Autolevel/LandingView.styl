@@ -4,6 +4,13 @@
   gap: 12px;
 }
 
+.path-row {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 12px;
+}
+
 .intro {
   margin-bottom: 4px;
 }
@@ -36,13 +43,17 @@
 
 .path-card {
   display: flex;
-  align-items: center;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 12px;
-  width: 100%;
+  min-width: 0;
+  width: auto;
   text-align: left;
   border: 1px solid var(--cnc-border, #cfd8e3);
   border-radius: var(--cnc-radius, 10px);
-  padding: 16px;
+  padding: 14px;
   background: var(--cnc-surface, #fff);
   color: inherit;
   cursor: pointer;
@@ -58,32 +69,34 @@
 .path-meta {
   flex: 1;
   min-width: 0;
+  width: 100%;
 }
 
 .path-title {
   font-family: var(--cnc-display, inherit);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 700;
   margin-bottom: 6px;
   color: var(--cnc-ink, #142033);
 }
 
 .path-description {
-  font-size: 13px;
+  font-size: 12px;
   color: var(--cnc-muted, #666);
   line-height: 1.4;
 }
 
 .path-action {
   flex-shrink: 0;
-  width: 36px;
-  height: 36px;
+  align-self: flex-end;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   background: var(--cnc-ink, #142033);
   color: #fff;
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
 }
