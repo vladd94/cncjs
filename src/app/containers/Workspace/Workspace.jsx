@@ -30,6 +30,10 @@ import {
 } from './constants';
 
 const WAIT = '%wait';
+const MOBILE_LAYOUT_MQ = '(max-width: 1100px)';
+const MOBILE_PANE_VIEW = 'view';
+const MOBILE_PANE_CONTROLS = 'controls';
+const MOBILE_PANE_TOOLS = 'tools';
 
 const startWaiting = () => {
   // Adds the 'wait' class to <html>
@@ -41,6 +45,12 @@ const stopWaiting = () => {
   const root = document.documentElement;
   root.classList.remove('wait');
 };
+
+const isMobileLayoutViewport = () => (
+  typeof window.matchMedia === 'function'
+    ? window.matchMedia(MOBILE_LAYOUT_MQ).matches
+    : window.innerWidth <= 1100
+);
 
 class Workspace extends PureComponent {
     static propTypes = {
@@ -59,7 +69,9 @@ class Workspace extends PureComponent {
       isUploading: false,
       showPrimaryContainer: store.get('workspace.container.primary.show'),
       showSecondaryContainer: store.get('workspace.container.secondary.show'),
-      inactiveCount: _.size(widgetManager.getInactiveWidgets())
+      inactiveCount: _.size(widgetManager.getInactiveWidgets()),
+      isMobileLayout: false,
+      mobilePane: MOBILE_PANE_VIEW,
     };
 
     action = {
@@ -224,6 +236,24 @@ class Workspace extends PureComponent {
       pubsub.publish('resize'); // Also see "widgets/Visualizer"
     };
 
+    syncMobileLayout = () => {
+      const isMobileLayout = isMobileLayoutViewport();
+      if (isMobileLayout !== this.state.isMobileLayout) {
+        this.setState({ isMobileLayout }, () => {
+          pubsub.publish('resize');
+        });
+      }
+    };
+
+    setMobilePane = (mobilePane) => {
+      if (mobilePane === this.state.mobilePane) {
+        return;
+      }
+      this.setState({ mobilePane }, () => {
+        pubsub.publish('resize');
+      });
+    };
+
     resizeDefaultContainer = () => {
       const sidebar = document.querySelector('#sidebar');
       const primaryContainer = ReactDOM.findDOMNode(this.primaryContainer);
@@ -245,6 +275,16 @@ class Workspace extends PureComponent {
           // Enable horizontal scroll
           document.body.style.overflowX = '';
         }
+      }
+
+      // Stacked mobile layout owns positioning via CSS; clear desktop inline offsets.
+      if (isMobileLayoutViewport()) {
+        if (defaultContainer) {
+          defaultContainer.style.left = '';
+          defaultContainer.style.right = '';
+        }
+        pubsub.publish('resize'); // Also see "widgets/Visualizer"
+        return;
       }
 
       if (showPrimaryContainer) {
@@ -374,6 +414,15 @@ class Workspace extends PureComponent {
     componentDidMount() {
       this.addControllerEvents();
       this.addResizeEventListener();
+      this.syncMobileLayout();
+      if (typeof window.matchMedia === 'function') {
+        this.mobileLayoutMql = window.matchMedia(MOBILE_LAYOUT_MQ);
+        if (this.mobileLayoutMql.addEventListener) {
+          this.mobileLayoutMql.addEventListener('change', this.syncMobileLayout);
+        } else if (this.mobileLayoutMql.addListener) {
+          this.mobileLayoutMql.addListener(this.syncMobileLayout);
+        }
+      }
 
       setTimeout(() => {
         // A workaround solution to trigger componentDidUpdate on initial render
@@ -384,6 +433,13 @@ class Workspace extends PureComponent {
     componentWillUnmount() {
       this.removeControllerEvents();
       this.removeResizeEventListener();
+      if (this.mobileLayoutMql) {
+        if (this.mobileLayoutMql.removeEventListener) {
+          this.mobileLayoutMql.removeEventListener('change', this.syncMobileLayout);
+        } else if (this.mobileLayoutMql.removeListener) {
+          this.mobileLayoutMql.removeListener(this.syncMobileLayout);
+        }
+      }
     }
 
     componentDidUpdate() {
@@ -426,13 +482,28 @@ class Workspace extends PureComponent {
         isDraggingWidget,
         showPrimaryContainer,
         showSecondaryContainer,
-        inactiveCount
+        inactiveCount,
+        isMobileLayout,
+        mobilePane,
       } = this.state;
       const hidePrimaryContainer = !showPrimaryContainer;
       const hideSecondaryContainer = !showSecondaryContainer;
+      // On mobile, pane tabs replace the desktop show/hide toggles.
+      const primaryHidden = isMobileLayout
+        ? mobilePane !== MOBILE_PANE_CONTROLS
+        : hidePrimaryContainer;
+      const secondaryHidden = isMobileLayout
+        ? mobilePane !== MOBILE_PANE_TOOLS
+        : hideSecondaryContainer;
+      const visualizerHidden = isMobileLayout && mobilePane !== MOBILE_PANE_VIEW;
 
       return (
-        <div style={style} className={classNames(className, styles.workspace)}>
+        <div
+          style={style}
+          className={classNames(className, styles.workspace, {
+            [styles.workspaceMobile]: isMobileLayout,
+          })}
+        >
           {modal.name === MODAL_FEEDER_PAUSED && (
             <FeederPaused
               title={modal.params.title}
@@ -459,6 +530,43 @@ class Workspace extends PureComponent {
               {i18n._('Drop G-code file here')}
             </div>
           </div>
+          {isMobileLayout && (
+            <div className={styles.mobilePaneSwitch} role="tablist" aria-label={i18n._('Workspace panels')}>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobilePane === MOBILE_PANE_VIEW}
+                className={classNames(styles.mobilePaneBtn, {
+                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_VIEW,
+                })}
+                onClick={() => this.setMobilePane(MOBILE_PANE_VIEW)}
+              >
+                {i18n._('View')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobilePane === MOBILE_PANE_CONTROLS}
+                className={classNames(styles.mobilePaneBtn, {
+                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_CONTROLS,
+                })}
+                onClick={() => this.setMobilePane(MOBILE_PANE_CONTROLS)}
+              >
+                {i18n._('Controls')}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mobilePane === MOBILE_PANE_TOOLS}
+                className={classNames(styles.mobilePaneBtn, {
+                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_TOOLS,
+                })}
+                onClick={() => this.setMobilePane(MOBILE_PANE_TOOLS)}
+              >
+                {i18n._('Tools')}
+              </button>
+            </div>
+          )}
           <Dropzone
             className={styles.dropzone}
             disabled={controller.workflow.state !== WORKFLOW_STATE_IDLE}
@@ -510,7 +618,10 @@ class Workspace extends PureComponent {
                   }}
                   className={classNames(
                     styles.primaryContainer,
-                    { [styles.hidden]: hidePrimaryContainer }
+                    {
+                      [styles.hidden]: primaryHidden,
+                      [styles.mobilePane]: isMobileLayout,
+                    }
                   )}
                 >
                   <ButtonToolbar style={{ margin: '5px 0' }}>
@@ -582,7 +693,7 @@ class Workspace extends PureComponent {
                     onDragEnd={this.widgetEventHandler.onDragEnd}
                   />
                 </div>
-                {hidePrimaryContainer && (
+                {hidePrimaryContainer && !isMobileLayout && (
                   <div
                     ref={node => {
                       this.primaryToggler = node;
@@ -610,12 +721,16 @@ class Workspace extends PureComponent {
                   }}
                   className={classNames(
                     styles.defaultContainer,
-                    styles.fixed
+                    styles.fixed,
+                    {
+                      [styles.hidden]: visualizerHidden,
+                      [styles.mobilePane]: isMobileLayout,
+                    }
                   )}
                 >
                   <DefaultWidgets />
                 </div>
-                {hideSecondaryContainer && (
+                {hideSecondaryContainer && !isMobileLayout && (
                   <div
                     ref={node => {
                       this.secondaryToggler = node;
@@ -643,7 +758,10 @@ class Workspace extends PureComponent {
                   }}
                   className={classNames(
                     styles.secondaryContainer,
-                    { [styles.hidden]: hideSecondaryContainer }
+                    {
+                      [styles.hidden]: secondaryHidden,
+                      [styles.mobilePane]: isMobileLayout,
+                    }
                   )}
                 >
                   <ButtonToolbar style={{ margin: '5px 0' }}>

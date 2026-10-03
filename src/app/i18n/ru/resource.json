@@ -646,5 +646,10 @@
   "None": "Нет",
   "WebGL:": "WebGL:",
   "Drop files to upload": "Перетащите файлы для загрузки",
-  "Uploading...": "Загрузка..."
+  "Uploading...": "Загрузка...",
+  "This file is already autolevel-compensated. Load the original G-code instead.": "",
+  "Compensation applied — corrected G-code loaded in workspace.": "",
+  "End X must be greater than Start X": "",
+  "End Y must be greater than Start Y": "",
+  "End Z must be below Start Z": ""
 }

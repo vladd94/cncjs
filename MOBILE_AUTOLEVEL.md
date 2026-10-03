@@ -1,9 +1,10 @@
 # Mobile CNCjs fork
 
-This branch adds a stacked workspace at widths up to 1100 px (including a
-1024×600 Pi display), larger touch controls and readable form inputs. It retains
-the existing desktop layout above that width. No additional runtime dependencies
-are introduced.
+This branch modernizes the workspace at widths up to 1100 px (including a
+1024×600 Pi display): bottom navigation, View/Controls/Tools panes, a shorter
+visualizer, larger touch controls, and a refreshed Autolevel landing flow. It
+retains the existing desktop layout above that width. No additional runtime
+dependencies are introduced.
 
 Autolevel file pickers no longer filter by extensions, because mobile file
 providers may disable unfamiliar `.nc`, `.gcode` and `.probe` files. Probe files

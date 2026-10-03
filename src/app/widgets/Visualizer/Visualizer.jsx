@@ -578,6 +578,12 @@ class Visualizer extends Component {
 
     getVisibleHeight() {
       const clientHeight = document.documentElement.clientHeight;
+      const isMobile = document.documentElement.classList.contains('cncjs-mobile');
+      if (isMobile) {
+        // Header + pane switch + bottom nav + visualizer chrome.
+        const chrome = 52 + 52 + 64 + 76;
+        return Math.max(240, clientHeight - chrome);
+      }
       const navbarHeight = 50;
       const widgetHeaderHeight = 38;
       const widgetFooterHeight = 38;

@@ -1,5 +1,9 @@
 @import "variables";
 
+.app-shell {
+    min-height: 100%;
+}
+
 .sidebar {
     background-color: $sidebar-background-color;
     position: fixed;
@@ -26,7 +30,75 @@
 }
 
 @media (max-width: 1100px) {
+    :global(html.cncjs-mobile) {
+        --cnc-bg-0: #d9e2ec;
+        --cnc-bg-1: #eef3f7;
+        --cnc-surface: rgba(255, 255, 255, 0.92);
+        --cnc-ink: #142033;
+        --cnc-muted: #5b6b7c;
+        --cnc-accent: #0f766e;
+        --cnc-accent-soft: #ccfbf1;
+        --cnc-nav: #0f1724;
+        --cnc-nav-ink: #e8eef5;
+        --cnc-border: rgba(20, 32, 51, 0.12);
+        --cnc-header-h: 52px;
+        --cnc-bottom-nav-h: 64px;
+        --cnc-pane-switch-h: 52px;
+        --cnc-radius: 14px;
+        --cnc-font: 'IBM Plex Sans', 'Segoe UI', sans-serif;
+        --cnc-display: 'Outfit', 'IBM Plex Sans', sans-serif;
+
+        body {
+            font-family: var(--cnc-font);
+            color: var(--cnc-ink);
+            background:
+                radial-gradient(1200px 480px at 10% -10%, rgba(15, 118, 110, 0.18), transparent 55%),
+                radial-gradient(900px 420px at 100% 0%, rgba(30, 64, 175, 0.12), transparent 50%),
+                linear-gradient(180deg, var(--cnc-bg-1), var(--cnc-bg-0));
+            background-attachment: fixed;
+        }
+
+        // Compact top bar
+        .navbar.navbar-inverse.navbar-fixed-top {
+            min-height: var(--cnc-header-h);
+            background: rgba(15, 23, 36, 0.92) !important;
+            backdrop-filter: blur(12px);
+            border: 0 !important;
+            box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+        }
+
+        .navbar-brand {
+            font-family: var(--cnc-display);
+        }
+    }
+
+    .sidebar {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: var(--cnc-bottom-nav-h, 64px);
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        background: var(--cnc-nav, #0f1724);
+        border-top: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 -10px 30px rgba(15, 23, 36, 0.18);
+        z-index: 1100;
+    }
+
     .main {
+        top: var(--cnc-header-h, 52px);
+        left: 0;
+        right: 0;
+        bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
         min-width: 0;
+        background: transparent;
+        overflow: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .content {
+        background: transparent;
+        min-height: 100%;
     }
 }

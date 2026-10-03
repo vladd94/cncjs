@@ -92,15 +92,81 @@
             top: ($navbar-height + 1);
             bottom: 0;
         }
+
+        &.hidden {
+            display: none;
+        }
+    }
+
+    .mobile-pane-switch {
+        display: none;
     }
 }
 
 @media (max-width: 1100px) {
     .workspace {
+        min-height: 100%;
+
+        .dropzone-overlay {
+            top: var(--cnc-header-h, 52px);
+            left: 0;
+            right: 0;
+            bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+            border-width: 3px;
+            border-radius: var(--cnc-radius, 14px);
+            margin: 8px;
+            background: rgba(238, 243, 247, 0.72);
+        }
+
+        .dropzone {
+            height: auto;
+            min-height: 100%;
+        }
+
+        .mobile-pane-switch {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            margin: 0;
+            padding: 10px 12px 8px;
+            background: linear-gradient(180deg, rgba(238, 243, 247, 0.96), rgba(238, 243, 247, 0.88));
+            backdrop-filter: blur(10px);
+        }
+
+        .mobile-pane-btn {
+            appearance: none;
+            border: 1px solid var(--cnc-border, rgba(20, 32, 51, 0.12));
+            background: var(--cnc-surface, #fff);
+            color: var(--cnc-muted, #5b6b7c);
+            border-radius: 999px;
+            min-height: 40px;
+            padding: 8px 10px;
+            font-family: var(--cnc-display, inherit);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
+        }
+
+        .mobile-pane-btn:active {
+            transform: scale(0.98);
+        }
+
+        .mobile-pane-btn-active {
+            background: var(--cnc-ink, #142033);
+            border-color: var(--cnc-ink, #142033);
+            color: #fff;
+            box-shadow: 0 8px 18px rgba(20, 32, 51, 0.18);
+        }
+
         .workspace-table,
         .workspace-table-row {
             display: block;
             height: auto;
+            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-bottom-nav-h, 64px) - var(--cnc-pane-switch-h, 52px));
         }
 
         .primary-container,
@@ -120,21 +186,74 @@
             // Desktop resize handlers set these offsets inline.
             left: auto !important;
             right: auto !important;
+            border: 0;
+            background: transparent;
         }
 
         .primary-container.hidden,
-        .secondary-container.hidden {
+        .secondary-container.hidden,
+        .default-container.hidden {
             display: none;
         }
 
-        button {
-            min-height: 44px;
-            min-width: 44px;
+        .mobile-pane {
+            animation: cncMobilePaneIn 220ms ease;
+            padding: 4px 12px 20px;
         }
 
-        :global(.form-control) {
-            min-height: 44px;
-            font-size: 16px;
+        .primary-container.mobile-pane,
+        .secondary-container.mobile-pane {
+            :global {
+                .btn-toolbar {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 8px;
+                    margin: 4px 0 12px !important;
+                    align-items: center;
+                }
+
+                .btn-group {
+                    margin: 0 !important;
+                }
+            }
         }
+
+        .default-container.mobile-pane {
+            padding: 0 12px 16px;
+        }
+
+        // Touch-friendly controls, but don't force icon chips to grow awkwardly.
+        :global {
+            button.btn {
+                min-height: 44px;
+                border-radius: 12px;
+                font-family: var(--cnc-font, inherit);
+                font-weight: 600;
+            }
+
+            button.btn-xs,
+            button.btn[style*="min-width: 30"] {
+                min-width: 44px;
+            }
+
+            .form-control {
+                min-height: 44px;
+                font-size: 16px;
+                border-radius: 12px;
+                border-color: var(--cnc-border, #d0d7de);
+                box-shadow: none;
+            }
+        }
+    }
+}
+
+@keyframes cncMobilePaneIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
     }
 }

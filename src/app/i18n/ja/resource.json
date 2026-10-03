@@ -643,5 +643,10 @@
   "None": "なし",
   "WebGL:": "WebGL:",
   "Drop files to upload": "アップロードするファイルをここにドラッグ＆ドロップ",
-  "Uploading...": "アップロード中..."
+  "Uploading...": "アップロード中...",
+  "This file is already autolevel-compensated. Load the original G-code instead.": "",
+  "Compensation applied — corrected G-code loaded in workspace.": "",
+  "End X must be greater than Start X": "",
+  "End Y must be greater than Start Y": "",
+  "End Z must be below Start Z": ""
 }

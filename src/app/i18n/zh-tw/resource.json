@@ -643,5 +643,10 @@
   "None": "無",
   "WebGL:": "WebGL:",
   "Drop files to upload": "將檔案拖曳至此處上傳",
-  "Uploading...": "正在上傳..."
+  "Uploading...": "正在上傳...",
+  "This file is already autolevel-compensated. Load the original G-code instead.": "",
+  "Compensation applied — corrected G-code loaded in workspace.": "",
+  "End X must be greater than Start X": "",
+  "End Y must be greater than Start Y": "",
+  "End Z must be below Start Z": ""
 }
