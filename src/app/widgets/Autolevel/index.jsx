@@ -432,77 +432,90 @@ class AutolevelWidget extends PureComponent {
         onProgress(PROCESSING_PHASE_COMPENSATING);
       }
 
-      controller.command('autolevel:applyProbeCompensation', {
+      // HTTP apply does not require an open serial port (controller.command would hang).
+      api.applyAutolevelCompensation({
         gcode,
         probeData: probedPositions,
-      }, (err, result) => {
-        if (err) {
-          log.error('Error applying auto-level:', err);
-          if (onError) {
-            onError(String(err));
+      })
+        .then((res) => {
+          const { compensatedGcode } = { ...res.body };
+          if (!compensatedGcode) {
+            throw new Error('Invalid compensation result');
           }
-          return;
-        }
 
-        if (!result || !result.compensatedGcode) {
-          log.error('Invalid result from compensation:', result);
-          if (onError) {
-            onError('Invalid compensation result');
+          if (onProgress) {
+            onProgress(PROCESSING_PHASE_LOADING);
           }
-          return;
-        }
 
-        const { compensatedGcode } = result;
-
-        if (onProgress) {
-          onProgress(PROCESSING_PHASE_LOADING);
-        }
-
-        // Load compensated G-code to server
-        const name = `AL_${gcodeFileName}`;
-        api.loadGCode({ port, name, gcode: compensatedGcode })
-          .then((res) => {
-            const { name: loadedName = '', gcode: loadedGcode = '' } = { ...res.body };
-            pubsub.publish('gcode:load', { name: loadedName, gcode: loadedGcode, isProbeCompensationApplied: true });
+          const name = `AL_${gcodeFileName}`;
+          const finish = (loadedName, loadedGcode) => {
+            pubsub.publish('gcode:load', {
+              name: loadedName,
+              gcode: loadedGcode,
+              isProbeCompensationApplied: true,
+            });
             this.setState({ gcodeApplied: true });
-            log.info('Auto-level applied and G-code loaded to server');
-
+            log.info('Auto-level applied and G-code loaded to workspace');
             if (onSuccess) {
               onSuccess(compensatedGcode);
             }
-          })
-          .catch((error) => {
-            log.error('Failed to load compensated G-code to server:', error);
-            if (onError) {
-              onError('Failed to load compensated G-code to workspace');
-            }
-          });
-      });
+          };
+
+          if (port) {
+            return api.loadGCode({ port, name, gcode: compensatedGcode })
+              .then((loadRes) => {
+                const { name: loadedName = name, gcode: loadedGcode = compensatedGcode } = { ...loadRes.body };
+                finish(loadedName, loadedGcode);
+              })
+              .catch((error) => {
+                log.error('Failed to load compensated G-code to controller, loading locally:', error);
+                // Still deliver compensated gcode to the UI when controller load fails.
+                finish(name, compensatedGcode);
+              });
+          }
+
+          finish(name, compensatedGcode);
+          return null;
+        })
+        .catch((error) => {
+          const message = (error && error.body && error.body.msg)
+            || (error && error.message)
+            || i18n._('Failed to apply probe compensation');
+          log.error('Error applying auto-level:', message);
+          if (onError) {
+            onError(String(message));
+          }
+        });
     },
     exportLevelledGcode: (gcode, gcodeFileName) => {
       const { probedPositions } = this.state;
 
-      controller.command('autolevel:applyProbeCompensation', {
+      api.applyAutolevelCompensation({
         gcode,
         probeData: probedPositions,
-      }, (err, result) => {
-        if (err) {
-          log.error('Error applying auto-level:', err);
-          return;
-        }
+      })
+        .then((res) => {
+          const { compensatedGcode } = { ...res.body };
+          if (!compensatedGcode) {
+            throw new Error('Invalid compensation result');
+          }
 
-        const { compensatedGcode } = result;
+          const blob = new Blob([compensatedGcode], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `AL_${gcodeFileName}`;
+          a.click();
+          URL.revokeObjectURL(url);
 
-        const blob = new Blob([compensatedGcode], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `AL_${gcodeFileName}`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        log.info('Levelled G-code exported');
-      });
+          log.info('Levelled G-code exported');
+        })
+        .catch((error) => {
+          const message = (error && error.body && error.body.msg)
+            || (error && error.message)
+            || 'Failed to export levelled G-code';
+          log.error('Error exporting levelled G-code:', message);
+        });
     },
     resetGcodeApplied: () => {
       this.setState({ gcodeApplied: false });

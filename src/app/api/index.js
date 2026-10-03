@@ -155,6 +155,21 @@ const loadGCode = (options) => new Promise((resolve, reject) => {
     });
 });
 
+const applyAutolevelCompensation = (options) => new Promise((resolve, reject) => {
+  const { gcode = '', probeData = [] } = { ...options };
+
+  authrequest
+    .post('/api/autolevel/apply')
+    .send({ gcode, probeData })
+    .end((err, res) => {
+      if (err) {
+        reject(res);
+      } else {
+        resolve(res);
+      }
+    });
+});
+
 const fetchGCode = (options) => new Promise((resolve, reject) => {
   const { port = '' } = { ...options };
 
@@ -740,6 +755,9 @@ export default {
   loadGCode,
   fetchGCode,
   downloadGCode,
+
+  // Autolevel
+  applyAutolevelCompensation,
 
   // Authentication
   signin,

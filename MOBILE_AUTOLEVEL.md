@@ -36,11 +36,11 @@ partial-axis rapid moves are preserved without inventing missing coordinates.
 Machine-coordinate G53 parking/retracts are preserved and invalidate the tracked
 work position until explicitly established again.
 
-Arcs (G2/G3), incremental positioning (G91), G28, coordinate resets and other
-unsupported G modes now return an error instead of silently creating a misleading
-compensated file. Configure CAM to emit linear moves and G53 retracts for this
-workflow. This intentionally narrows accepted input while arc-aware compensation
-remains unimplemented. A failed compensation does not replace the current job.
+IJK arcs (G2/G3) in G17/G18/G19 are linearized into compensated G1 segments.
+R-word arcs, incremental positioning (G91), G28, coordinate resets and other
+unsupported G modes return an error instead of silently creating a misleading
+compensated file. A failed compensation does not replace the current job.
+Compensation also works without an open serial port via `/api/autolevel/apply`.
 
 A negative-Y work area is valid: for example Start Y = -100, End Y = 0. These
 fields describe minimum/maximum coordinates, not selectable probe travel

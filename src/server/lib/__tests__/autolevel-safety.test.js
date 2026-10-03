@@ -26,8 +26,20 @@ describe('autolevel safety regressions', () => {
     expect(result.split('\n').pop()).toContain('Z0.000');
   });
 
-  test.each(['G2 X10 Y0 I5 J0', 'G03 X10 Y0 R5', 'G91', 'G92 X0', 'G28 Z0', 'G55'])('rejects unsupported command %s', (command) => {
+  test.each(['G91', 'G92 X0', 'G28 Z0', 'G55'])('rejects unsupported command %s', (command) => {
     expect(() => applyProbeCompensation(`G0 X0 Y0 Z5\n${command}`, surface)).toThrow('Unsupported');
+  });
+
+  test('rejects R-word arcs', () => {
+    expect(() => applyProbeCompensation('G0 X0 Y0 Z5\nG03 X10 Y0 R5', surface)).toThrow('R-word');
+  });
+
+  test('linearizes G17 arcs into compensated G1 moves', () => {
+    const result = body('G17\nG0 X0 Y0 Z0\nG3 X10 Y0 I5 J0 F100');
+    const lines = result.split('\n');
+    expect(lines.some(line => /^G[23]\b/.test(line))).toBe(false);
+    expect(lines.some(line => line.includes('G1') && line.includes('F100'))).toBe(true);
+    expect(lines.pop()).toContain('X10.000');
   });
 
   test('rejects mixed units rather than reinterpreting previous coordinates', () => {
