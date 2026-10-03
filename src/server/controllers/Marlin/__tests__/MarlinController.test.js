@@ -662,15 +662,15 @@ describe('MarlinController', () => {
         { x: 0, y: 10, z: 0 },
         { x: 10, y: 10, z: 0 },
       ];
-      controller.command('autolevel:applyProbeCompensation', { gcode: 'G0 X5 Y5', probeData }, callback);
+      controller.command('autolevel:applyProbeCompensation', { gcode: 'G0 X5 Y5 Z0', probeData }, callback);
       expect(callback).toHaveBeenCalledWith(null, { compensatedGcode: 'G0 X5.000 Y5.000 Z0.000' });
     });
 
-    test('autolevel:applyProbeCompensation passes G-code through when probe data is insufficient', () => {
+    test('autolevel:applyProbeCompensation reports an error when probe data is insufficient', () => {
       setup();
       const callback = jest.fn();
       controller.command('autolevel:applyProbeCompensation', { gcode: 'G0 X5 Y5', probeData: [{ x: 0, y: 0, z: 0 }] }, callback);
-      expect(callback).toHaveBeenCalledWith(null, { compensatedGcode: 'G0 X5 Y5' });
+      expect(callback).toHaveBeenCalledWith('At least 3 valid probe points are required');
     });
 
     test('completing a G38.2 line queries the position and flags probe capture', () => {

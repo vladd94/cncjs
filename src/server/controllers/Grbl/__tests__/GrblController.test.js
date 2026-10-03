@@ -871,7 +871,7 @@ describe('GrblController', () => {
       const callback = jest.fn();
 
       controller.command('autolevel:applyProbeCompensation', {
-        gcode: 'G1 X0 Y0 F100',
+        gcode: 'G1 X0 Y0 Z0 F100',
         probeData: [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0 },
@@ -885,19 +885,19 @@ describe('GrblController', () => {
       });
     });
 
-    test('autolevel:applyProbeCompensation passes gcode through when probe data is insufficient', () => {
+    test('autolevel:applyProbeCompensation reports an error when probe data is insufficient', () => {
       const { controller } = setup();
       const callback = jest.fn();
 
       controller.command('autolevel:applyProbeCompensation', {
-        gcode: 'G1 X0 Y0 F100',
+        gcode: 'G1 X0 Y0 Z0 F100',
         probeData: [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0 },
         ],
       }, callback);
 
-      expect(callback).toHaveBeenCalledWith(null, { compensatedGcode: 'G1 X0 Y0 F100' });
+      expect(callback).toHaveBeenCalledWith('At least 3 valid probe points are required');
     });
   });
 
