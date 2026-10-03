@@ -123,13 +123,16 @@
             min-height: 100%;
         }
 
+        .mobile-top-chrome {
+            position: sticky;
+            top: 0;
+            z-index: 30;
+        }
+
         .mobile-pane-switch {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
             gap: 6px;
-            position: sticky;
-            top: 0;
-            z-index: 20;
             margin: 0;
             padding: 10px 12px 8px;
             background: linear-gradient(180deg, rgba(238, 243, 247, 0.96), rgba(238, 243, 247, 0.88));
@@ -166,7 +169,7 @@
         .workspace-table-row {
             display: block;
             height: auto;
-            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-bottom-nav-h, 64px) - var(--cnc-pane-switch-h, 52px));
+            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-machine-bar-h, 76px) - var(--cnc-bottom-nav-h, 64px) - var(--cnc-pane-switch-h, 52px));
         }
 
         .primary-container,

@@ -21,6 +21,7 @@ import SecondaryWidgets from './SecondaryWidgets';
 import FeederPaused from './modals/FeederPaused';
 import FeederWait from './modals/FeederWait';
 import ServerDisconnected from './modals/ServerDisconnected';
+import MobileMachineControls from './MobileMachineControls';
 import styles from './index.styl';
 import {
   MODAL_NONE,
@@ -531,40 +532,43 @@ class Workspace extends PureComponent {
             </div>
           </div>
           {isMobileLayout && (
-            <div className={styles.mobilePaneSwitch} role="tablist" aria-label={i18n._('Workspace panels')}>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mobilePane === MOBILE_PANE_VIEW}
-                className={classNames(styles.mobilePaneBtn, {
-                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_VIEW,
-                })}
-                onClick={() => this.setMobilePane(MOBILE_PANE_VIEW)}
-              >
-                {i18n._('View')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mobilePane === MOBILE_PANE_CONTROLS}
-                className={classNames(styles.mobilePaneBtn, {
-                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_CONTROLS,
-                })}
-                onClick={() => this.setMobilePane(MOBILE_PANE_CONTROLS)}
-              >
-                {i18n._('Controls')}
-              </button>
-              <button
-                type="button"
-                role="tab"
-                aria-selected={mobilePane === MOBILE_PANE_TOOLS}
-                className={classNames(styles.mobilePaneBtn, {
-                  [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_TOOLS,
-                })}
-                onClick={() => this.setMobilePane(MOBILE_PANE_TOOLS)}
-              >
-                {i18n._('Tools')}
-              </button>
+            <div className={styles.mobileTopChrome}>
+              <MobileMachineControls />
+              <div className={styles.mobilePaneSwitch} role="tablist" aria-label={i18n._('Workspace panels')}>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mobilePane === MOBILE_PANE_VIEW}
+                  className={classNames(styles.mobilePaneBtn, {
+                    [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_VIEW,
+                  })}
+                  onClick={() => this.setMobilePane(MOBILE_PANE_VIEW)}
+                >
+                  {i18n._('View')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mobilePane === MOBILE_PANE_CONTROLS}
+                  className={classNames(styles.mobilePaneBtn, {
+                    [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_CONTROLS,
+                  })}
+                  onClick={() => this.setMobilePane(MOBILE_PANE_CONTROLS)}
+                >
+                  {i18n._('Controls')}
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={mobilePane === MOBILE_PANE_TOOLS}
+                  className={classNames(styles.mobilePaneBtn, {
+                    [styles.mobilePaneBtnActive]: mobilePane === MOBILE_PANE_TOOLS,
+                  })}
+                  onClick={() => this.setMobilePane(MOBILE_PANE_TOOLS)}
+                >
+                  {i18n._('Tools')}
+                </button>
+              </div>
             </div>
           )}
           <Dropzone
