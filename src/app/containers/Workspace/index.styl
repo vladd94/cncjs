@@ -94,3 +94,47 @@
         }
     }
 }
+
+@media (max-width: 1100px) {
+    .workspace {
+        .workspace-table,
+        .workspace-table-row {
+            display: block;
+            height: auto;
+        }
+
+        .primary-container,
+        .secondary-container,
+        .default-container,
+        .default-container.fixed,
+        .primary-toggler,
+        .secondary-toggler {
+            display: block;
+            position: relative;
+            width: 100%;
+            min-width: 0;
+            max-width: none;
+            height: auto;
+            top: auto;
+            bottom: auto;
+            // Desktop resize handlers set these offsets inline.
+            left: auto !important;
+            right: auto !important;
+        }
+
+        .primary-container.hidden,
+        .secondary-container.hidden {
+            display: none;
+        }
+
+        button {
+            min-height: 44px;
+            min-width: 44px;
+        }
+
+        :global(.form-control) {
+            min-height: 44px;
+            font-size: 16px;
+        }
+    }
+}

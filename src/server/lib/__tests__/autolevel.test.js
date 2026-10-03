@@ -66,21 +66,19 @@ describe('autolevel', () => {
 
   describe('applyProbeCompensation', () => {
     describe('error handling', () => {
-      test('should return original G-code if less than 3 probe points', () => {
+      test('should reject fewer than 3 probe points', () => {
         const gcode = 'G0 X10 Y10 Z5';
         const probeData = [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0.1 },
         ];
 
-        const result = applyProbeCompensation(gcode, probeData);
-        expect(result).toBe(gcode);
+        expect(() => applyProbeCompensation(gcode, probeData)).toThrow('At least 3');
       });
 
-      test('should return original G-code for empty probe data', () => {
+      test('should reject empty probe data', () => {
         const gcode = 'G0 X10 Y10 Z5';
-        const result = applyProbeCompensation(gcode, []);
-        expect(result).toBe(gcode);
+        expect(() => applyProbeCompensation(gcode, [])).toThrow('At least 3');
       });
     });
 

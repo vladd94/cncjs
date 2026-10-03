@@ -55,6 +55,7 @@ import {
   PROCESSING_PHASE_LOADING,
 } from './constants';
 import styles from './index.styl';
+import { parseProbeFile } from './probeFile';
 
 class AutolevelWidget extends PureComponent {
   static propTypes = {
@@ -136,7 +137,7 @@ class AutolevelWidget extends PureComponent {
       // Open file dialog
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.probe';
+      // Do not filter by extension: mobile file providers may not recognize .probe.
       input.onchange = (event) => {
         const file = event.target.files[0];
         if (!file) {
@@ -149,14 +150,14 @@ class AutolevelWidget extends PureComponent {
           const data = e.target.result;
           this.actions.handleProbeFileLoaded(filepath, data);
         };
+        reader.onerror = () => this.setState({ probeFileError: i18n._('Failed to read file') });
         reader.readAsText(file);
       };
       input.click();
     },
     handleProbeFileLoaded: (filepath, data) => {
       try {
-        const lines = data.split('\n').filter(line => line.trim().length > 0);
-        const probedPositions = [];
+        const probedPositions = parseProbeFile(data);
         let minZ = Infinity;
         let maxZ = -Infinity;
         let minX = Infinity;
@@ -164,23 +165,20 @@ class AutolevelWidget extends PureComponent {
         let minY = Infinity;
         let maxY = -Infinity;
 
-        lines.forEach(line => {
-          const values = line.trim().split(/\s+/).map(Number);
-          const [x, y, z] = values;
-          if (!Number.isNaN(x) && !Number.isNaN(y) && !Number.isNaN(z)) {
-            probedPositions.push({ x, y, z });
-            minZ = Math.min(z, minZ);
-            maxZ = Math.max(z, maxZ);
-            minX = Math.min(x, minX);
-            maxX = Math.max(x, maxX);
-            minY = Math.min(y, minY);
-            maxY = Math.max(y, maxY);
-          }
+        probedPositions.forEach(({ x, y, z }) => {
+          minZ = Math.min(z, minZ);
+          maxZ = Math.max(z, maxZ);
+          minX = Math.min(x, minX);
+          maxX = Math.max(x, maxX);
+          minY = Math.min(y, minY);
+          maxY = Math.max(y, maxY);
         });
 
         this.setState({
           wizardView: VIEW_APPLY,
           probeFileName: filepath,
+          probeFileError: '',
+          gcodeApplied: false,
           probedPositions,
           probeStats: {
             points: probedPositions.length,
@@ -210,6 +208,7 @@ class AutolevelWidget extends PureComponent {
 
         log.info(`Loaded ${probedPositions.length} points from ${filepath}`);
       } catch (err) {
+        this.setState({ probeFileError: err.message });
         log.error('Error loading probe file:', err);
       }
     },
@@ -831,6 +830,7 @@ class AutolevelWidget extends PureComponent {
       probedPositions: [],
       probeStats: null,
       probeFileName: '',
+      probeFileError: '',
       // G-code state
       gcodeApplied: false,
     };
@@ -903,7 +903,7 @@ class AutolevelWidget extends PureComponent {
   }
 
   isValidNumber(value) {
-    return typeof value === 'number' && !Number.isNaN(value);
+    return typeof value === 'number' && Number.isFinite(value);
   }
 
   getValidationErrors() {
@@ -929,6 +929,12 @@ class AutolevelWidget extends PureComponent {
     if (!this.isValidNumber(endY)) {
       errors.endY = invalidMsg;
     }
+    if (this.isValidNumber(startX) && this.isValidNumber(endX) && endX <= startX) {
+      errors.endX = i18n._('End X must be greater than Start X');
+    }
+    if (this.isValidNumber(startY) && this.isValidNumber(endY) && endY <= startY) {
+      errors.endY = i18n._('End Y must be greater than Start Y');
+    }
     if (!this.isValidNumber(stepX)) {
       errors.stepX = invalidMsg;
     } else if (stepX <= 0) {
@@ -949,9 +955,13 @@ class AutolevelWidget extends PureComponent {
     }
     if (!this.isValidNumber(endZ)) {
       errors.endZ = invalidMsg;
+    } else if (endZ >= startZ) {
+      errors.endZ = i18n._('End Z must be below Start Z');
     }
     if (!this.isValidNumber(feedrate)) {
       errors.feedrate = invalidMsg;
+    } else if (feedrate <= 0) {
+      errors.feedrate = positiveMsg;
     }
 
     return errors;
@@ -970,6 +980,9 @@ class AutolevelWidget extends PureComponent {
 
     return (
       <div>
+        {this.state.probeFileError && (
+          <div className="alert alert-danger" role="alert">{this.state.probeFileError}</div>
+        )}
         {modal.name === MODAL_START_PROBE_CONFIRM && (
           <StartProbeModal
             state={state}

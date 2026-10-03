@@ -351,17 +351,25 @@ export const createProbeXYPoints = (options) => {
  * @returns {string} Compensated G-code string
  */
 export const applyProbeCompensation = (gcodeStr, probeData = []) => {
+  if (!Array.isArray(probeData) || probeData.length < 3) {
+    throw new Error('At least 3 valid probe points are required');
+  }
+  if (probeData.some(p => !p || !['x', 'y', 'z'].every(axis => Number.isFinite(p[axis])))) {
+    throw new Error('Probe coordinates must be finite numbers');
+  }
+  const keys = new Set(probeData.map(p => `${p.x},${p.y}`));
+  if (keys.size !== probeData.length) {
+    throw new Error('Probe data contains duplicate XY positions');
+  }
+  if (getThreeClosestPoints(probeData[0], probeData).length < 3) {
+    throw new Error('Probe points must span a surface, not a single line');
+  }
   // Extract just x, y, z from probe data
   const probedPositions = probeData.map(p => ({
     x: Number(p.x),
     y: Number(p.y),
     z: Number(p.z),
   }));
-
-  if (probedPositions.length < 3) {
-    log.error('Not enough probed positions for compensation (need at least 3)');
-    return gcodeStr;
-  }
 
   const surface = buildSurface(probedPositions);
   const { stepX, stepY } = surface;
@@ -373,8 +381,9 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
 
   let p0 = { x: 0, y: 0, z: 0 };
   let p0Initialized = false;
-  let pt = { x: 0, y: 0, z: 0 };
-  let isAbsolutePositioning = true;
+  let pt = {};
+  let motion = 'G0';
+  let selectedUnits = null;
   let units = METRIC_UNITS;
 
   lines.forEach((line, lineIndex) => {
@@ -395,26 +404,42 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       return;
     }
 
-    // Skip compensation for certain G-codes
-    if (words.some(word => /^(G38.+|G5.+|G10|G4.+|G92|G92.1)$/i.test(word))) {
+    // This compensator supports absolute linear milling only. Reject other
+    // geometry/modes instead of silently producing an incorrect toolpath.
+    const gCodes = words.filter(word => /^G/i.test(word)).map(word => Number(word.slice(1)));
+    const supported = [0, 1, 4, 17, 20, 21, 40, 49, 53, 54, 90, 94];
+    const unsupported = gCodes.find(code => !supported.includes(code));
+    if (unsupported !== undefined) {
+      throw new Error(`Unsupported G${unsupported} on line ${lineIndex + 1}: autolevel requires absolute G0/G1 moves in G54; linearize arcs in CAM`);
+    }
+    if (words.some(word => /^[ABCUVW]/i.test(word))) {
+      throw new Error(`Unsupported auxiliary-axis move on line ${lineIndex + 1}`);
+    }
+    const unitCode = gCodes.find(code => code === 20 || code === 21);
+    if (unitCode !== undefined) {
+      if (selectedUnits !== null && selectedUnits !== unitCode) {
+        throw new Error('Changing units within a compensated program is not supported');
+      }
+      selectedUnits = unitCode;
+      units = unitCode === 20 ? IMPERIAL_UNITS : METRIC_UNITS;
+    }
+    if (gCodes.includes(0)) {
+      motion = 'G0';
+    }
+    if (gCodes.includes(1)) {
+      motion = 'G1';
+    }
+    if (gCodes.includes(53)) {
+      // Machine-coordinate parking/retract moves must remain unmodified.
+      // Their work-coordinate endpoint is unknown without the machine's WCO.
       results.push(line);
+      pt = {};
+      p0Initialized = false;
       return;
     }
-
-    // Track positioning mode
-    if (words.includes('G91')) {
-      isAbsolutePositioning = false;
-    }
-    if (words.includes('G90')) {
-      isAbsolutePositioning = true;
-    }
-
-    // Track units
-    if (words.includes('G20')) {
-      units = IMPERIAL_UNITS;
-    }
-    if (words.includes('G21')) {
-      units = METRIC_UNITS;
+    if (gCodes.includes(4)) {
+      results.push(line);
+      return;
     }
 
     // Extract coordinate values from words (single pass)
@@ -435,6 +460,9 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       return;
     }
 
+    // Once coordinates are seen, an implicit initial units mode is also fixed.
+    selectedUnits = selectedUnits === null ? 21 : selectedUnits;
+
     // Update coordinates
     if (coordinate.x !== undefined) {
       pt.x = coordinate.x;
@@ -446,50 +474,58 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       pt.z = coordinate.z;
     }
 
-    if (isAbsolutePositioning) {
-      // Build line without XYZ coordinates
-      const lineWithoutXYZ = words
-        .filter(word => {
-          const letter = word[0].toUpperCase();
-          return (letter !== 'X' && letter !== 'Y' && letter !== 'Z');
-        })
-        .join(' ');
+    if (![pt.x, pt.y, pt.z].every(Number.isFinite)) {
+      // Preserve initial positioning/retracts until XYZ is explicitly known.
+      // In particular, a Z-only retract must never invent an XY move to zero.
+      if (motion === 'G1') {
+        throw new Error(`Set absolute X, Y and Z with G0 before cutting (line ${lineIndex + 1})`);
+      }
+      results.push(line);
+      return;
+    }
 
-      // Calculate max segment length based on step size and units
-      //
-      // Approach | Formula                    | Use Case
-      // :------- | :------------------------- | :------------------------------------------
-      // Min      | Math.min(stepX, stepY)     | Conservative - captures detail in both axes
-      // Max      | Math.max(stepX, stepY)     | Faster - fewer segments
-      // Average  | (stepX + stepY) / 2        | Balanced
-      // Diagonal | Math.sqrt(stepX² + stepY²) | Grid cell diagonal
-      //
-      // Using Math.min(stepX, stepY) ensures the segment length is small enough to capture surface variations in both directions.
-      // If stepX = 5mm and stepY = 20mm, using min (5mm) prevents missing detail along the finer X grid.
-      const step = Math.min(stepX, stepY);
-      const maxSegmentLength = (units === IMPERIAL_UNITS ? mm2in(step) : step) / 2;
+    // Build line without XYZ coordinates
+    const lineWithoutXYZ = words
+      .filter(word => {
+        const letter = word[0].toUpperCase();
+        return (letter !== 'X' && letter !== 'Y' && letter !== 'Z');
+      })
+      .join(' ');
 
-      if (p0Initialized) {
-        // Split into segments and compensate each
-        const segments = subdivideSegment(p0, pt, maxSegmentLength);
-        // Skip first segment (it's p0, already output in previous command)
-        for (let i = 1; i < segments.length; i++) {
-          const seg = segments[i];
-          const cpt = compensatePoint(seg, surface, units);
-          const newLine = `${lineWithoutXYZ} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
-          results.push(newLine.trim());
-        }
-      } else {
-        // First point - just compensate without splitting
-        const cpt = compensatePoint(pt, surface, units);
-        const newLine = `${lineWithoutXYZ} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
+    // Calculate max segment length based on step size and units
+    //
+    // Approach | Formula                    | Use Case
+    // :------- | :------------------------- | :------------------------------------------
+    // Min      | Math.min(stepX, stepY)     | Conservative - captures detail in both axes
+    // Max      | Math.max(stepX, stepY)     | Faster - fewer segments
+    // Average  | (stepX + stepY) / 2        | Balanced
+    // Diagonal | Math.sqrt(stepX² + stepY²) | Grid cell diagonal
+    //
+    // Using Math.min(stepX, stepY) ensures the segment length is small enough to capture surface variations in both directions.
+    // If stepX = 5mm and stepY = 20mm, using min (5mm) prevents missing detail along the finer X grid.
+    const step = Math.min(stepX, stepY);
+    const maxSegmentLength = (units === IMPERIAL_UNITS ? mm2in(step) : step) / 2;
+
+    if (p0Initialized) {
+      // Split into segments and compensate each
+      const segments = subdivideSegment(p0, pt, maxSegmentLength);
+      if (segments.length === 0 && lineWithoutXYZ) {
+        results.push(lineWithoutXYZ);
+      }
+      // Skip first segment (it's p0, already output in previous command)
+      for (let i = 1; i < segments.length; i++) {
+        const seg = segments[i];
+        const cpt = compensatePoint(seg, surface, units);
+        const prefix = i === 1 ? lineWithoutXYZ : motion;
+        const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
         results.push(newLine.trim());
-        p0Initialized = true;
       }
     } else {
-      // Relative mode - copy as-is with warning
-      results.push(line);
-      log.warn('Relative positioning (G91) may not produce correct compensation results');
+      // First point - just compensate without splitting
+      const cpt = compensatePoint(pt, surface, units);
+      const newLine = `${lineWithoutXYZ} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
+      results.push(newLine.trim());
+      p0Initialized = true;
     }
 
     // Update previous position

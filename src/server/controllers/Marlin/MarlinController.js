@@ -1919,13 +1919,16 @@ class MarlinController {
             probeData,
           } = params;
 
-          // Use AutoLevel static method for compensation (step size auto-detected from probeData)
-          const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData);
-
-          log.info('[autolevel:applyProbeCompensation] Probe compensation applied');
-
-          if (typeof callback === 'function') {
-            callback(null, { compensatedGcode });
+          try {
+            const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData);
+            if (typeof callback === 'function') {
+              callback(null, { compensatedGcode });
+            }
+          } catch (err) {
+            log.error('[autolevel:applyProbeCompensation]', err);
+            if (typeof callback === 'function') {
+              callback(err.message);
+            }
           }
         },
       }[cmd];
