@@ -40,26 +40,18 @@
   gap: 12px;
   width: 100%;
   text-align: left;
-  border: 1px solid var(--cnc-border, #ddd);
-  border-radius: var(--cnc-radius, 14px);
+  border: 1px solid var(--cnc-border, #cfd8e3);
+  border-radius: var(--cnc-radius, 10px);
   padding: 16px;
-  background:
-    linear-gradient(135deg, rgba(15, 118, 110, 0.08), transparent 42%),
-    var(--cnc-surface, #f9f9f9);
+  background: var(--cnc-surface, #fff);
   color: inherit;
   cursor: pointer;
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 
   &:hover,
   &:focus {
     outline: none;
-    border-color: rgba(15, 118, 110, 0.45);
-    box-shadow: 0 10px 24px rgba(20, 32, 51, 0.08);
-    transform: translateY(-1px);
-  }
-
-  &:active {
-    transform: translateY(0);
+    border-color: var(--cnc-accent, #0f766e);
+    background: var(--cnc-accent-soft, #d7f3ef);
   }
 }
 

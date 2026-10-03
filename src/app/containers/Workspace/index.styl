@@ -113,9 +113,9 @@
             right: 0;
             bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
             border-width: 3px;
-            border-radius: var(--cnc-radius, 14px);
+            border-radius: var(--cnc-radius, 10px);
             margin: 8px;
-            background: rgba(238, 243, 247, 0.72);
+            background: rgba(232, 238, 244, 0.9);
         }
 
         .dropzone {
@@ -123,10 +123,14 @@
             min-height: 100%;
         }
 
+        // Fixed chrome avoids sticky compositing cost on low-power GPUs.
         .mobile-top-chrome {
-            position: sticky;
-            top: 0;
+            position: fixed;
+            top: var(--cnc-header-h, 52px);
+            left: 0;
+            right: 0;
             z-index: 30;
+            background: #0f1724;
         }
 
         .mobile-pane-switch {
@@ -134,42 +138,38 @@
             grid-template-columns: repeat(3, 1fr);
             gap: 6px;
             margin: 0;
-            padding: 10px 12px 8px;
-            background: linear-gradient(180deg, rgba(238, 243, 247, 0.96), rgba(238, 243, 247, 0.88));
-            backdrop-filter: blur(10px);
+            padding: 8px 10px;
+            background: #e8eef4;
+            border-bottom: 1px solid var(--cnc-border, #cfd8e3);
         }
 
         .mobile-pane-btn {
             appearance: none;
-            border: 1px solid var(--cnc-border, rgba(20, 32, 51, 0.12));
+            border: 1px solid var(--cnc-border, #cfd8e3);
             background: var(--cnc-surface, #fff);
             color: var(--cnc-muted, #5b6b7c);
-            border-radius: 999px;
+            border-radius: 10px;
             min-height: 40px;
             padding: 8px 10px;
             font-family: var(--cnc-display, inherit);
             font-size: 13px;
             font-weight: 600;
             letter-spacing: 0.02em;
-            transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, transform 160ms ease;
-        }
-
-        .mobile-pane-btn:active {
-            transform: scale(0.98);
         }
 
         .mobile-pane-btn-active {
             background: var(--cnc-ink, #142033);
             border-color: var(--cnc-ink, #142033);
             color: #fff;
-            box-shadow: 0 8px 18px rgba(20, 32, 51, 0.18);
         }
 
         .workspace-table,
         .workspace-table-row {
             display: block;
             height: auto;
-            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-machine-bar-h, 76px) - var(--cnc-bottom-nav-h, 64px) - var(--cnc-pane-switch-h, 52px));
+            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-top-chrome-h, 128px) - var(--cnc-bottom-nav-h, 64px));
+            // Reserve space under the fixed machine + pane chrome.
+            padding-top: var(--cnc-top-chrome-h, 128px);
         }
 
         .primary-container,
@@ -200,7 +200,6 @@
         }
 
         .mobile-pane {
-            animation: cncMobilePaneIn 220ms ease;
             padding: 4px 12px 20px;
         }
 
@@ -229,7 +228,7 @@
         :global {
             button.btn {
                 min-height: 44px;
-                border-radius: 12px;
+                border-radius: 10px;
                 font-family: var(--cnc-font, inherit);
                 font-weight: 600;
             }
@@ -242,21 +241,10 @@
             .form-control {
                 min-height: 44px;
                 font-size: 16px;
-                border-radius: 12px;
-                border-color: var(--cnc-border, #d0d7de);
+                border-radius: 10px;
+                border-color: var(--cnc-border, #cfd8e3);
                 box-shadow: none;
             }
         }
-    }
-}
-
-@keyframes cncMobilePaneIn {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
     }
 }

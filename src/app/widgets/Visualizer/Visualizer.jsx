@@ -581,8 +581,9 @@ class Visualizer extends Component {
       const isMobile = document.documentElement.classList.contains('cncjs-mobile');
       if (isMobile) {
         // Header + machine bar + pane switch + bottom nav + visualizer chrome.
+        // Cap height for low-power GPUs (e.g. Pi panels at 1024×600).
         const chrome = 52 + 76 + 52 + 64 + 76;
-        return Math.max(220, clientHeight - chrome);
+        return Math.min(360, Math.max(200, clientHeight - chrome));
       }
       const navbarHeight = 50;
       const widgetHeaderHeight = 38;
@@ -592,6 +593,15 @@ class Visualizer extends Component {
       );
 
       return visibleHeight;
+    }
+
+    isRendererVisible() {
+      const el = this.renderer && this.renderer.domElement;
+      if (!el || !el.isConnected) {
+        return false;
+      }
+      // Hidden mobile panes use display:none; skip WebGL work while off-screen.
+      return el.offsetWidth > 0 && el.offsetHeight > 0;
     }
 
     addResizeEventListener() {
@@ -604,6 +614,10 @@ class Visualizer extends Component {
 
     resizeRenderer() {
       if (!(this.camera && this.renderer)) {
+        return;
+      }
+
+      if (!this.isRendererVisible()) {
         return;
       }
 
@@ -866,13 +880,14 @@ class Visualizer extends Component {
       const width = this.getVisibleWidth();
       const height = this.getVisibleHeight();
 
-      // WebGLRenderer
+      // WebGLRenderer — keep Pi / mobile shell cheap (no MSAA, no soft shadows).
+      const lowPower = document.documentElement.classList.contains('cncjs-mobile');
       this.renderer = new THREE.WebGLRenderer({
         autoClearColor: true,
-        antialias: true,
+        antialias: !lowPower,
         alpha: true
       });
-      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.enabled = !lowPower;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       this.renderer.setClearColor(new THREE.Color(colornames('white')), 1);
       this.renderer.setPixelRatio(getRenderPixelRatio());
@@ -1027,7 +1042,7 @@ class Visualizer extends Component {
       const { forceUpdate = false } = { ...options };
       const needUpdateScene = this.props.show || forceUpdate;
 
-      if (this.renderer && needUpdateScene) {
+      if (this.renderer && needUpdateScene && this.isRendererVisible()) {
         this.renderer.render(this.scene, this.camera);
       }
     }

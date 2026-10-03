@@ -6,6 +6,12 @@ visualizer, larger touch controls, and a refreshed Autolevel landing flow. It
 retains the existing desktop layout above that width. No additional runtime
 dependencies are introduced.
 
+Mobile/Pi shell performance notes (Chromium on Raspberry Pi):
+- No Google Fonts, `backdrop-filter`, soft shadows, or multi-layer gradients.
+- Machine/pane chrome is `position: fixed` (not sticky) with solid paints.
+- Visualizer uses 1× pixel ratio, no MSAA/soft shadows, capped canvas height,
+  and skips WebGL renders/resizes while the View pane is hidden.
+
 Autolevel file pickers no longer filter by extensions, because mobile file
 providers may disable unfamiliar `.nc`, `.gcode` and `.probe` files. Probe files
 with a `.txt` suffix work too. Their contents must still be whitespace-separated
