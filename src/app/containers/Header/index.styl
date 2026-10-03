@@ -51,3 +51,60 @@
         }
     }
 }
+
+@media (max-width: 1100px) {
+    :global {
+        .navbar-inverse .navbar-toggle {
+            border-color: rgba(255, 255, 255, 0.18);
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+
+        .navbar-inverse .navbar-collapse {
+            border-color: rgba(255, 255, 255, 0.08);
+            background: rgba(15, 23, 36, 0.98);
+            max-height: none;
+        }
+    }
+
+    .quick-access-toolbar {
+        margin: 8px 0;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+
+        :global {
+            .btn-group {
+                float: none;
+                display: inline-flex;
+                margin-right: 8px;
+            }
+
+            // Homing/Sleep/Unlock/Reset live in the sticky workspace bar on mobile.
+            .btn-group:nth-child(2) {
+                display: none;
+            }
+
+            .btn {
+                height: 44px;
+                min-width: 44px;
+                border-radius: 10px;
+                font-family: var(--cnc-font, inherit);
+                font-weight: 600;
+            }
+        }
+    }
+
+    .nav-dropdown-toggle {
+        &&& {
+            min-width: 44px;
+            min-height: 44px;
+            color: rgba(232, 238, 245, 0.85);
+
+            &:hover > * {
+                color: #fff;
+            }
+        }
+    }
+}

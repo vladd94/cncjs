@@ -92,15 +92,84 @@
             top: ($navbar-height + 1);
             bottom: 0;
         }
+
+        &.hidden {
+            display: none;
+        }
+    }
+
+    .mobile-pane-switch {
+        display: none;
     }
 }
 
 @media (max-width: 1100px) {
     .workspace {
+        min-height: 100%;
+
+        .dropzone-overlay {
+            top: var(--cnc-header-h, 52px);
+            left: 0;
+            right: 0;
+            bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+            border-width: 3px;
+            border-radius: var(--cnc-radius, 10px);
+            margin: 8px;
+            background: rgba(232, 238, 244, 0.9);
+        }
+
+        .dropzone {
+            height: auto;
+            min-height: 100%;
+        }
+
+        // Fixed chrome avoids sticky compositing cost on low-power GPUs.
+        .mobile-top-chrome {
+            position: fixed;
+            top: var(--cnc-header-h, 52px);
+            left: 0;
+            right: 0;
+            z-index: 30;
+            background: #0f1724;
+        }
+
+        .mobile-pane-switch {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            margin: 0;
+            padding: 8px 10px;
+            background: #e8eef4;
+            border-bottom: 1px solid var(--cnc-border, #cfd8e3);
+        }
+
+        .mobile-pane-btn {
+            appearance: none;
+            border: 1px solid var(--cnc-border, #cfd8e3);
+            background: var(--cnc-surface, #fff);
+            color: var(--cnc-muted, #5b6b7c);
+            border-radius: 10px;
+            min-height: 40px;
+            padding: 8px 10px;
+            font-family: var(--cnc-display, inherit);
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+
+        .mobile-pane-btn-active {
+            background: var(--cnc-ink, #142033);
+            border-color: var(--cnc-ink, #142033);
+            color: #fff;
+        }
+
         .workspace-table,
         .workspace-table-row {
             display: block;
             height: auto;
+            min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-top-chrome-h, 128px) - var(--cnc-bottom-nav-h, 64px));
+            // Reserve space under the fixed machine + pane chrome.
+            padding-top: var(--cnc-top-chrome-h, 128px);
         }
 
         .primary-container,
@@ -120,21 +189,62 @@
             // Desktop resize handlers set these offsets inline.
             left: auto !important;
             right: auto !important;
+            border: 0;
+            background: transparent;
         }
 
         .primary-container.hidden,
-        .secondary-container.hidden {
+        .secondary-container.hidden,
+        .default-container.hidden {
             display: none;
         }
 
-        button {
-            min-height: 44px;
-            min-width: 44px;
+        .mobile-pane {
+            padding: 4px 12px 20px;
         }
 
-        :global(.form-control) {
-            min-height: 44px;
-            font-size: 16px;
+        .primary-container.mobile-pane,
+        .secondary-container.mobile-pane {
+            :global {
+                .btn-toolbar {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 8px;
+                    margin: 4px 0 12px !important;
+                    align-items: center;
+                }
+
+                .btn-group {
+                    margin: 0 !important;
+                }
+            }
+        }
+
+        .default-container.mobile-pane {
+            padding: 0 12px 16px;
+        }
+
+        // Touch-friendly controls, but don't force icon chips to grow awkwardly.
+        :global {
+            button.btn {
+                min-height: 44px;
+                border-radius: 10px;
+                font-family: var(--cnc-font, inherit);
+                font-weight: 600;
+            }
+
+            button.btn-xs,
+            button.btn[style*="min-width: 30"] {
+                min-width: 44px;
+            }
+
+            .form-control {
+                min-height: 44px;
+                font-size: 16px;
+                border-radius: 10px;
+                border-color: var(--cnc-border, #cfd8e3);
+                box-shadow: none;
+            }
         }
     }
 }

@@ -20,5 +20,23 @@
     button {
       white-space: normal;
     }
+
+    :global {
+      .alert {
+        border-radius: 12px;
+        border: 0;
+        font-family: var(--cnc-font, inherit);
+      }
+
+      .alert-success {
+        background: var(--cnc-accent-soft, #ccfbf1);
+        color: var(--cnc-accent, #0f766e);
+      }
+
+      .btn {
+        width: 100%;
+        justify-content: center;
+      }
+    }
   }
 }

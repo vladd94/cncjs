@@ -644,5 +644,10 @@
   "None": "None",
   "WebGL:": "WebGL:",
   "Drop files to upload": "Drop files to upload",
-  "Uploading...": "Uploading..."
+  "Uploading...": "Uploading...",
+  "This file is already autolevel-compensated. Load the original G-code instead.": "This file is already autolevel-compensated. Load the original G-code instead.",
+  "Compensation applied — corrected G-code loaded in workspace.": "Compensation applied — corrected G-code loaded in workspace.",
+  "End X must be greater than Start X": "End X must be greater than Start X",
+  "End Y must be greater than Start Y": "End Y must be greater than Start Y",
+  "End Z must be below Start Z": "End Z must be below Start Z"
 }

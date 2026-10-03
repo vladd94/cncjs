@@ -333,6 +333,12 @@ class CNCEngine {
           const controller = store.get(`controllers["${port}"]`);
           if (!controller || controller.isClose()) {
             log.error(`Serial port "${port}" not accessible`);
+            // Invoke callback args so clients are not left hanging forever.
+            args.forEach((arg) => {
+              if (typeof arg === 'function') {
+                arg(new Error(`Serial port "${port}" not accessible`));
+              }
+            });
             return;
           }
 

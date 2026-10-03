@@ -1,0 +1,68 @@
+.machine-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px;
+  background: #0f1724;
+  border-bottom: 1px solid #243044;
+}
+
+.machine-btn {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 56px;
+  min-width: 0;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  font-family: var(--cnc-display, inherit);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+
+  > .fa {
+    font-size: 18px;
+    line-height: 1;
+  }
+
+  > span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &:focus {
+    outline: 2px solid rgba(255, 255, 255, 0.55);
+    outline-offset: 2px;
+  }
+}
+
+.homing {
+  background: #2563eb;
+}
+
+.sleep {
+  background: #16a34a;
+}
+
+.unlock {
+  background: #d97706;
+}
+
+.reset {
+  background: #dc2626;
+}
+
+@media (max-width: 380px) {
+  .machine-btn {
+    font-size: 11px;
+    min-height: 54px;
+  }
+}

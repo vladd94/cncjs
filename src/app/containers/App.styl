@@ -1,5 +1,9 @@
 @import "variables";
 
+.app-shell {
+    min-height: 100%;
+}
+
 .sidebar {
     background-color: $sidebar-background-color;
     position: fixed;
@@ -26,7 +30,69 @@
 }
 
 @media (max-width: 1100px) {
+    // Keep paints cheap for Raspberry Pi / older Chromium: solid colors only,
+    // no backdrop-filter, no multi-layer gradients, no soft shadows.
+    :global(html.cncjs-mobile) {
+        --cnc-bg-0: #e8eef4;
+        --cnc-surface: #ffffff;
+        --cnc-ink: #142033;
+        --cnc-muted: #5b6b7c;
+        --cnc-accent: #0f766e;
+        --cnc-accent-soft: #d7f3ef;
+        --cnc-nav: #0f1724;
+        --cnc-nav-ink: #e8eef5;
+        --cnc-border: #cfd8e3;
+        --cnc-header-h: 52px;
+        --cnc-bottom-nav-h: 64px;
+        --cnc-machine-bar-h: 76px;
+        --cnc-pane-switch-h: 52px;
+        --cnc-top-chrome-h: 128px;
+        --cnc-radius: 10px;
+        --cnc-font: "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+        --cnc-display: "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+
+        body {
+            font-family: var(--cnc-font);
+            color: var(--cnc-ink);
+            background: var(--cnc-bg-0);
+        }
+
+        .navbar.navbar-inverse.navbar-fixed-top {
+            min-height: var(--cnc-header-h);
+            background: #0f1724 !important;
+            border: 0 !important;
+        }
+
+        .navbar-brand {
+            font-family: var(--cnc-display);
+        }
+    }
+
+    .sidebar {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: var(--cnc-bottom-nav-h, 64px);
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        background: var(--cnc-nav, #0f1724);
+        border-top: 1px solid #243044;
+        z-index: 1100;
+    }
+
     .main {
+        top: var(--cnc-header-h, 52px);
+        left: 0;
+        right: 0;
+        bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
         min-width: 0;
+        background: var(--cnc-bg-0, #e8eef4);
+        overflow: auto;
+    }
+
+    .content {
+        background: transparent;
+        min-height: 100%;
     }
 }

@@ -1,6 +1,7 @@
 import * as version from './api.version';
 import * as state from './api.state';
 import * as gcode from './api.gcode';
+import * as autolevel from './api.autolevel';
 import * as controllers from './api.controllers';
 import * as watch from './api.watch';
 import * as commands from './api.commands';
@@ -15,6 +16,7 @@ export {
   version,
   state,
   gcode,
+  autolevel,
   controllers,
   watch,
   commands,

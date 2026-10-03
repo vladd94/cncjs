@@ -31,6 +31,12 @@ const log = logger('autolevel');
 // Default probe-grid spacing (mm) when the data isn't a usable rectangular grid.
 const DEFAULT_GRID_STEP = 5;
 
+// Written as the first line of compensated output; refuse to apply again if present.
+export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
+
+// Match buildProbeGrid / duplicate detection (1 µm).
+const roundProbeXY = (v) => Math.round(v * 1000) / 1000;
+
 // Vector subtraction: p1 - p2
 const sub3 = (p1, p2) => ({
   x: p1.x - p2.x,
@@ -124,6 +130,93 @@ const subdivideSegment = (p1, p2, maxSegmentLength) => {
   return result;
 };
 
+const normalizeAngleDelta = (delta, clockwise) => {
+  if (clockwise) {
+    return delta > 0 ? delta - (2 * Math.PI) : delta;
+  }
+  return delta < 0 ? delta + (2 * Math.PI) : delta;
+};
+
+/**
+ * Linearize a G2/G3 arc (IJK form) into XYZ points for Z compensation.
+ * Supports G17 (XY+helical Z), G18 (ZX+helical Y), and G19 (YZ+helical X).
+ */
+const linearizeArc = (start, end, offsets, plane, clockwise, maxSegmentLength) => {
+  let u0;
+  let v0;
+  let u1;
+  let v1;
+  let cu;
+  let cv;
+  let linear0;
+  let linear1;
+  let toPoint;
+
+  if (plane === 18) {
+    // ZX plane: U=X, V=Z, linear=Y
+    u0 = start.x;
+    v0 = start.z;
+    u1 = end.x;
+    v1 = end.z;
+    cu = start.x + (Number.isFinite(offsets.i) ? offsets.i : 0);
+    cv = start.z + (Number.isFinite(offsets.k) ? offsets.k : 0);
+    linear0 = start.y;
+    linear1 = end.y;
+    toPoint = (u, v, linear) => ({ x: u, y: linear, z: v });
+  } else if (plane === 19) {
+    // YZ plane: U=Y, V=Z, linear=X
+    u0 = start.y;
+    v0 = start.z;
+    u1 = end.y;
+    v1 = end.z;
+    cu = start.y + (Number.isFinite(offsets.j) ? offsets.j : 0);
+    cv = start.z + (Number.isFinite(offsets.k) ? offsets.k : 0);
+    linear0 = start.x;
+    linear1 = end.x;
+    toPoint = (u, v, linear) => ({ x: linear, y: u, z: v });
+  } else {
+    // G17 XY plane: U=X, V=Y, linear=Z
+    u0 = start.x;
+    v0 = start.y;
+    u1 = end.x;
+    v1 = end.y;
+    cu = start.x + (Number.isFinite(offsets.i) ? offsets.i : 0);
+    cv = start.y + (Number.isFinite(offsets.j) ? offsets.j : 0);
+    linear0 = start.z;
+    linear1 = end.z;
+    toPoint = (u, v, linear) => ({ x: u, y: v, z: linear });
+  }
+
+  const radius0 = Math.hypot(u0 - cu, v0 - cv);
+  const radius1 = Math.hypot(u1 - cu, v1 - cv);
+  if (!(radius0 > 1e-9) || Math.abs(radius0 - radius1) > 0.05) {
+    throw new Error('Invalid arc offsets for compensation');
+  }
+
+  const theta0 = Math.atan2(v0 - cv, u0 - cu);
+  const theta1 = Math.atan2(v1 - cv, u1 - cu);
+  let delta = normalizeAngleDelta(theta1 - theta0, clockwise);
+  if (Math.abs(delta) < 1e-12) {
+    // Full circle or zero-length; treat as zero move
+    return [];
+  }
+
+  const arcLen = Math.abs(delta) * radius0;
+  const steps = Math.max(1, Math.ceil(arcLen / Math.max(maxSegmentLength, 1e-6)));
+  const points = [toPoint(u0, v0, linear0)];
+  for (let s = 1; s <= steps; s++) {
+    const t = s / steps;
+    const theta = theta0 + (delta * t);
+    const u = cu + (radius0 * Math.cos(theta));
+    const v = cv + (radius0 * Math.sin(theta));
+    const linear = linear0 + ((linear1 - linear0) * t);
+    points.push(toPoint(u, v, linear));
+  }
+  // Snap endpoint exactly
+  points[points.length - 1] = { x: end.x, y: end.y, z: end.z };
+  return points;
+};
+
 /**
  * Find three closest non-collinear probed points to a given point.
  * Used as a fallback for non-grid data (see planeFitZ).
@@ -191,9 +284,8 @@ const planeFitZ = (x, y, probedPositions) => {
  *   X or Y values.
  */
 const buildProbeGrid = (probedPositions) => {
-  const round = (v) => Math.round(v * 1000) / 1000; // 1 micron tolerance
-  const xs = [...new Set(probedPositions.map(p => round(p.x)))].sort((a, b) => a - b);
-  const ys = [...new Set(probedPositions.map(p => round(p.y)))].sort((a, b) => a - b);
+  const xs = [...new Set(probedPositions.map(p => roundProbeXY(p.x)))].sort((a, b) => a - b);
+  const ys = [...new Set(probedPositions.map(p => roundProbeXY(p.y)))].sort((a, b) => a - b);
   if (xs.length < 2 || ys.length < 2) {
     return null;
   }
@@ -201,13 +293,13 @@ const buildProbeGrid = (probedPositions) => {
   const yIndex = new Map(ys.map((y, j) => [y, j]));
   const matrix = ys.map(() => new Array(xs.length).fill(undefined));
   for (const p of probedPositions) {
-    matrix[yIndex.get(round(p.y))][xIndex.get(round(p.x))] = p.z;
+    matrix[yIndex.get(roundProbeXY(p.y))][xIndex.get(roundProbeXY(p.x))] = p.z;
   }
   return { xs, ys, matrix };
 };
 
-// Largest cell index i with values[i] <= v, clamped to a valid cell [0, n-2] so
-// points outside the grid extrapolate from the nearest edge cell.
+// Largest cell index i with values[i] <= v, clamped to a valid cell [0, n-2].
+// Combined with clamped bilinear weights, out-of-map queries use the nearest edge height.
 const findCell = (values, v) => {
   let i = 0;
   while ((i < values.length - 2) && (values[i + 1] <= v)) {
@@ -247,8 +339,9 @@ const bilinearZ = (grid, x, y) => {
   if (z00 === undefined || z10 === undefined || z01 === undefined || z11 === undefined) {
     return null;
   }
-  const a = (x - xs[i]) / (xs[i + 1] - xs[i]);
-  const b = (y - ys[j]) / (ys[j + 1] - ys[j]);
+  // Clamp to the edge of the nearest cell so out-of-map XY cannot amplify Z.
+  const a = Math.min(1, Math.max(0, (x - xs[i]) / (xs[i + 1] - xs[i])));
+  const b = Math.min(1, Math.max(0, (y - ys[j]) / (ys[j + 1] - ys[j])));
   return z00 * (1 - a) * (1 - b) +
     z10 * a * (1 - b) +
     z01 * (1 - a) * b +
@@ -351,13 +444,18 @@ export const createProbeXYPoints = (options) => {
  * @returns {string} Compensated G-code string
  */
 export const applyProbeCompensation = (gcodeStr, probeData = []) => {
+  if (typeof gcodeStr === 'string' && gcodeStr.includes(AUTOLEVEL_APPLIED_MARKER)) {
+    throw new Error('G-code is already autolevel-compensated; refusing to apply again');
+  }
   if (!Array.isArray(probeData) || probeData.length < 3) {
     throw new Error('At least 3 valid probe points are required');
   }
   if (probeData.some(p => !p || !['x', 'y', 'z'].every(axis => Number.isFinite(p[axis])))) {
     throw new Error('Probe coordinates must be finite numbers');
   }
-  const keys = new Set(probeData.map(p => `${p.x},${p.y}`));
+  // Use the same micron rounding as the bilinear grid so near-duplicates cannot
+  // silently overwrite a cell height after validation.
+  const keys = new Set(probeData.map(p => `${roundProbeXY(p.x)},${roundProbeXY(p.y)}`));
   if (keys.size !== probeData.length) {
     throw new Error('Probe data contains duplicate XY positions');
   }
@@ -377,12 +475,14 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
   log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points)...`);
 
   const lines = gcodeStr.split('\n');
-  const results = [];
+  const results = [`; ${AUTOLEVEL_APPLIED_MARKER}`];
 
   let p0 = { x: 0, y: 0, z: 0 };
   let p0Initialized = false;
   let pt = {};
-  let motion = 'G0';
+  // null until G0/G1/G2/G3 is seen — do not invent rapids on bare-XYZ continuations.
+  let motion = null;
+  let plane = 17;
   let selectedUnits = null;
   let units = METRIC_UNITS;
 
@@ -404,16 +504,18 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       return;
     }
 
-    // This compensator supports absolute linear milling only. Reject other
-    // geometry/modes instead of silently producing an incorrect toolpath.
+    // Absolute G0/G1 plus linearized G2/G3 in G17/G18/G19. Reject other modes.
     const gCodes = words.filter(word => /^G/i.test(word)).map(word => Number(word.slice(1)));
-    const supported = [0, 1, 4, 17, 20, 21, 40, 49, 53, 54, 90, 94];
+    const supported = [0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 40, 49, 53, 54, 90, 94];
     const unsupported = gCodes.find(code => !supported.includes(code));
     if (unsupported !== undefined) {
-      throw new Error(`Unsupported G${unsupported} on line ${lineIndex + 1}: autolevel requires absolute G0/G1 moves in G54; linearize arcs in CAM`);
+      throw new Error(`Unsupported G${unsupported} on line ${lineIndex + 1}: autolevel requires absolute G0/G1/G2/G3 moves in G54`);
     }
     if (words.some(word => /^[ABCUVW]/i.test(word))) {
       throw new Error(`Unsupported auxiliary-axis move on line ${lineIndex + 1}`);
+    }
+    if (words.some(word => /^R/i.test(word))) {
+      throw new Error(`R-word arcs are not supported on line ${lineIndex + 1}; use IJK arcs or linearize in CAM`);
     }
     const unitCode = gCodes.find(code => code === 20 || code === 21);
     if (unitCode !== undefined) {
@@ -423,11 +525,26 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       selectedUnits = unitCode;
       units = unitCode === 20 ? IMPERIAL_UNITS : METRIC_UNITS;
     }
+    if (gCodes.includes(17)) {
+      plane = 17;
+    }
+    if (gCodes.includes(18)) {
+      plane = 18;
+    }
+    if (gCodes.includes(19)) {
+      plane = 19;
+    }
     if (gCodes.includes(0)) {
       motion = 'G0';
     }
     if (gCodes.includes(1)) {
       motion = 'G1';
+    }
+    if (gCodes.includes(2)) {
+      motion = 'G2';
+    }
+    if (gCodes.includes(3)) {
+      motion = 'G3';
     }
     if (gCodes.includes(53)) {
       // Machine-coordinate parking/retract moves must remain unmodified.
@@ -435,10 +552,6 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       results.push(line);
       pt = {};
       p0Initialized = false;
-      return;
-    }
-    if (gCodes.includes(4)) {
-      results.push(line);
       return;
     }
 
@@ -453,6 +566,26 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       }
       return result;
     })();
+    const offsets = (() => {
+      const result = { i: undefined, j: undefined, k: undefined };
+      for (const word of words) {
+        const letter = word[0].toUpperCase();
+        if (letter === 'I' || letter === 'J' || letter === 'K') {
+          result[letter.toLowerCase()] = parseFloat(word.substring(1));
+        }
+      }
+      return result;
+    })();
+
+    if (gCodes.includes(4)) {
+      // Pure dwell is fine; dwell mixed with XYZ would skip pose updates and
+      // leave uncompensated motion in the output.
+      if (coordinate.x !== undefined || coordinate.y !== undefined || coordinate.z !== undefined) {
+        throw new Error(`G4 with XYZ on line ${lineIndex + 1} is not supported; put dwell on its own line`);
+      }
+      results.push(line);
+      return;
+    }
 
     // If no coordinate change, copy line as-is
     if ((coordinate.x === undefined) && (coordinate.y === undefined) && (coordinate.z === undefined)) {
@@ -474,58 +607,69 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       pt.z = coordinate.z;
     }
 
+    const isArc = motion === 'G2' || motion === 'G3';
     if (![pt.x, pt.y, pt.z].every(Number.isFinite)) {
       // Preserve initial positioning/retracts until XYZ is explicitly known.
       // In particular, a Z-only retract must never invent an XY move to zero.
-      if (motion === 'G1') {
+      if (motion === 'G1' || isArc) {
         throw new Error(`Set absolute X, Y and Z with G0 before cutting (line ${lineIndex + 1})`);
       }
       results.push(line);
       return;
     }
 
-    // Build line without XYZ coordinates
-    const lineWithoutXYZ = words
+    // Keep feed/spindle words; drop geometry words. Arcs are rewritten as G1.
+    const lineWithoutGeom = words
       .filter(word => {
         const letter = word[0].toUpperCase();
-        return (letter !== 'X' && letter !== 'Y' && letter !== 'Z');
+        if (letter === 'X' || letter === 'Y' || letter === 'Z' || letter === 'I' || letter === 'J' || letter === 'K') {
+          return false;
+        }
+        if (/^G[23]$/i.test(word)) {
+          return false;
+        }
+        return true;
       })
       .join(' ');
 
     // Calculate max segment length based on step size and units
-    //
-    // Approach | Formula                    | Use Case
-    // :------- | :------------------------- | :------------------------------------------
-    // Min      | Math.min(stepX, stepY)     | Conservative - captures detail in both axes
-    // Max      | Math.max(stepX, stepY)     | Faster - fewer segments
-    // Average  | (stepX + stepY) / 2        | Balanced
-    // Diagonal | Math.sqrt(stepX² + stepY²) | Grid cell diagonal
-    //
-    // Using Math.min(stepX, stepY) ensures the segment length is small enough to capture surface variations in both directions.
-    // If stepX = 5mm and stepY = 20mm, using min (5mm) prevents missing detail along the finer X grid.
     const step = Math.min(stepX, stepY);
     const maxSegmentLength = (units === IMPERIAL_UNITS ? mm2in(step) : step) / 2;
 
-    if (p0Initialized) {
-      // Split into segments and compensate each
-      const segments = subdivideSegment(p0, pt, maxSegmentLength);
-      if (segments.length === 0 && lineWithoutXYZ) {
-        results.push(lineWithoutXYZ);
+    const emitSegments = (segments, firstPrefix, restPrefix) => {
+      if (segments.length === 0 && firstPrefix) {
+        results.push(firstPrefix);
+        return;
       }
-      // Skip first segment (it's p0, already output in previous command)
       for (let i = 1; i < segments.length; i++) {
         const seg = segments[i];
         const cpt = compensatePoint(seg, surface, units);
-        const prefix = i === 1 ? lineWithoutXYZ : motion;
+        const prefix = i === 1 ? firstPrefix : restPrefix;
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
         results.push(newLine.trim());
       }
-    } else {
-      // First point - just compensate without splitting
+    };
+
+    if (!p0Initialized) {
+      if (isArc) {
+        throw new Error(`Arc on line ${lineIndex + 1} needs a prior absolute XYZ position`);
+      }
       const cpt = compensatePoint(pt, surface, units);
-      const newLine = `${lineWithoutXYZ} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
+      const newLine = `${lineWithoutGeom} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
       results.push(newLine.trim());
       p0Initialized = true;
+    } else if (isArc) {
+      let segments;
+      try {
+        segments = linearizeArc(p0, pt, offsets, plane, motion === 'G2', maxSegmentLength);
+      } catch (err) {
+        throw new Error(`${err.message} (line ${lineIndex + 1})`);
+      }
+      const firstPrefix = ['G1', lineWithoutGeom].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+      emitSegments(segments, firstPrefix, 'G1');
+    } else {
+      const segments = subdivideSegment(p0, pt, maxSegmentLength);
+      emitSegments(segments, lineWithoutGeom, motion || '');
     }
 
     // Update previous position

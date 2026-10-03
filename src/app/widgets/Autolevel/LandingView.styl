@@ -1,34 +1,89 @@
-// Landing View
 .landing-view {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
+}
+
+.intro {
+  margin-bottom: 4px;
+}
+
+.kicker {
+  font-family: var(--cnc-display, inherit);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--cnc-accent, #0f766e);
+  margin-bottom: 6px;
+}
+
+.headline {
+  font-family: var(--cnc-display, inherit);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--cnc-ink, #142033);
+  margin: 0 0 8px;
+}
+
+.lede {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--cnc-muted, #5b6b7c);
 }
 
 .path-card {
-  border: 1px solid #ddd;
-  padding: 15px;
-  background-color: #f9f9f9;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--cnc-border, #cfd8e3);
+  border-radius: var(--cnc-radius, 10px);
+  padding: 16px;
+  background: var(--cnc-surface, #fff);
+  color: inherit;
+  cursor: pointer;
 
-  &:hover {
-    background-color: #f5f5f5;
+  &:hover,
+  &:focus {
+    outline: none;
+    border-color: var(--cnc-accent, #0f766e);
+    background: var(--cnc-accent-soft, #d7f3ef);
   }
 }
 
+.path-meta {
+  flex: 1;
+  min-width: 0;
+}
+
 .path-title {
-  display: flex;
-  align-items: center;
-  column-gap: 4px;
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 8px;
-  color: #333;
+  font-family: var(--cnc-display, inherit);
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--cnc-ink, #142033);
 }
 
 .path-description {
-  font-size: 12px;
-  color: #666;
-  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--cnc-muted, #666);
   line-height: 1.4;
 }
 
+.path-action {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--cnc-ink, #142033);
+  color: #fff;
+  font-size: 18px;
+  line-height: 1;
+}

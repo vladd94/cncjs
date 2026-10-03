@@ -1,9 +1,16 @@
 # Mobile CNCjs fork
 
-This branch adds a stacked workspace at widths up to 1100 px (including a
-1024×600 Pi display), larger touch controls and readable form inputs. It retains
-the existing desktop layout above that width. No additional runtime dependencies
-are introduced.
+This branch modernizes the workspace at widths up to 1100 px (including a
+1024×600 Pi display): bottom navigation, View/Controls/Tools panes, a shorter
+visualizer, larger touch controls, and a refreshed Autolevel landing flow. It
+retains the existing desktop layout above that width. No additional runtime
+dependencies are introduced.
+
+Mobile/Pi shell performance notes (Chromium on Raspberry Pi):
+- No Google Fonts, `backdrop-filter`, soft shadows, or multi-layer gradients.
+- Machine/pane chrome is `position: fixed` (not sticky) with solid paints.
+- Visualizer uses 1× pixel ratio, no MSAA/soft shadows, capped canvas height,
+  and skips WebGL renders/resizes while the View pane is hidden.
 
 Autolevel file pickers no longer filter by extensions, because mobile file
 providers may disable unfamiliar `.nc`, `.gcode` and `.probe` files. Probe files
@@ -21,8 +28,9 @@ rejects duplicate XY locations and collinear maps.
 4. Wait for **Compensation applied — corrected G-code loaded in workspace**.
    The corrected filename starts with `AL_`. Loading another workspace file or
    unloading G-code clears this success state.
-5. Export the corrected file if needed. Do not compensate an already compensated
-   file a second time.
+5. Export the corrected file if needed. Compensated output starts with
+   `; cncjs-autolevel-applied` and filenames use an `AL_` prefix; the UI and
+   server both refuse to apply compensation a second time.
 
 ## Supported toolpaths
 
@@ -34,11 +42,11 @@ partial-axis rapid moves are preserved without inventing missing coordinates.
 Machine-coordinate G53 parking/retracts are preserved and invalidate the tracked
 work position until explicitly established again.
 
-Arcs (G2/G3), incremental positioning (G91), G28, coordinate resets and other
-unsupported G modes now return an error instead of silently creating a misleading
-compensated file. Configure CAM to emit linear moves and G53 retracts for this
-workflow. This intentionally narrows accepted input while arc-aware compensation
-remains unimplemented. A failed compensation does not replace the current job.
+IJK arcs (G2/G3) in G17/G18/G19 are linearized into compensated G1 segments.
+R-word arcs, incremental positioning (G91), G28, coordinate resets and other
+unsupported G modes return an error instead of silently creating a misleading
+compensated file. A failed compensation does not replace the current job.
+Compensation also works without an open serial port via `/api/autolevel/apply`.
 
 A negative-Y work area is valid: for example Start Y = -100, End Y = 0. These
 fields describe minimum/maximum coordinates, not selectable probe travel
@@ -60,7 +68,8 @@ Before using this branch for a cut:
   surface height, then run above the work with the spindle off.
 - Verify G54 alignment, units, probe clearance and probe input operation on the
   actual controller. Keep all cutting XY positions inside the measured area;
-  this engine does not reject all out-of-map paths.
+  out-of-map XY is clamped to the nearest probe-grid edge height (not
+  extrapolated).
 - Verify reconnect/reload behavior before resuming a job; the success banner is
   session-local and is not a persistent machine-level certificate of compensation.
 
