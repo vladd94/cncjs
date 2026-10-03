@@ -881,7 +881,7 @@ describe('GrblController', () => {
       }, callback);
 
       expect(callback).toHaveBeenCalledWith(null, {
-        compensatedGcode: 'G1 F100 X0.000 Y0.000 Z0.000',
+        compensatedGcode: '; cncjs-autolevel-applied\nG1 F100 X0.000 Y0.000 Z0.000',
       });
     });
 

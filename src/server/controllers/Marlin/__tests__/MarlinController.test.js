@@ -663,7 +663,9 @@ describe('MarlinController', () => {
         { x: 10, y: 10, z: 0 },
       ];
       controller.command('autolevel:applyProbeCompensation', { gcode: 'G0 X5 Y5 Z0', probeData }, callback);
-      expect(callback).toHaveBeenCalledWith(null, { compensatedGcode: 'G0 X5.000 Y5.000 Z0.000' });
+      expect(callback).toHaveBeenCalledWith(null, {
+        compensatedGcode: '; cncjs-autolevel-applied\nG0 X5.000 Y5.000 Z0.000',
+      });
     });
 
     test('autolevel:applyProbeCompensation reports an error when probe data is insufficient', () => {

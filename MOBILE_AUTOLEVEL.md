@@ -21,8 +21,9 @@ rejects duplicate XY locations and collinear maps.
 4. Wait for **Compensation applied — corrected G-code loaded in workspace**.
    The corrected filename starts with `AL_`. Loading another workspace file or
    unloading G-code clears this success state.
-5. Export the corrected file if needed. Do not compensate an already compensated
-   file a second time.
+5. Export the corrected file if needed. Compensated output starts with
+   `; cncjs-autolevel-applied` and filenames use an `AL_` prefix; the UI and
+   server both refuse to apply compensation a second time.
 
 ## Supported toolpaths
 
@@ -60,7 +61,8 @@ Before using this branch for a cut:
   surface height, then run above the work with the spindle off.
 - Verify G54 alignment, units, probe clearance and probe input operation on the
   actual controller. Keep all cutting XY positions inside the measured area;
-  this engine does not reject all out-of-map paths.
+  out-of-map XY is clamped to the nearest probe-grid edge height (not
+  extrapolated).
 - Verify reconnect/reload behavior before resuming a job; the success banner is
   session-local and is not a persistent machine-level certificate of compensation.
 

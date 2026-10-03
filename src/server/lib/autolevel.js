@@ -31,6 +31,12 @@ const log = logger('autolevel');
 // Default probe-grid spacing (mm) when the data isn't a usable rectangular grid.
 const DEFAULT_GRID_STEP = 5;
 
+// Written as the first line of compensated output; refuse to apply again if present.
+export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
+
+// Match buildProbeGrid / duplicate detection (1 µm).
+const roundProbeXY = (v) => Math.round(v * 1000) / 1000;
+
 // Vector subtraction: p1 - p2
 const sub3 = (p1, p2) => ({
   x: p1.x - p2.x,
@@ -191,9 +197,8 @@ const planeFitZ = (x, y, probedPositions) => {
  *   X or Y values.
  */
 const buildProbeGrid = (probedPositions) => {
-  const round = (v) => Math.round(v * 1000) / 1000; // 1 micron tolerance
-  const xs = [...new Set(probedPositions.map(p => round(p.x)))].sort((a, b) => a - b);
-  const ys = [...new Set(probedPositions.map(p => round(p.y)))].sort((a, b) => a - b);
+  const xs = [...new Set(probedPositions.map(p => roundProbeXY(p.x)))].sort((a, b) => a - b);
+  const ys = [...new Set(probedPositions.map(p => roundProbeXY(p.y)))].sort((a, b) => a - b);
   if (xs.length < 2 || ys.length < 2) {
     return null;
   }
@@ -201,13 +206,13 @@ const buildProbeGrid = (probedPositions) => {
   const yIndex = new Map(ys.map((y, j) => [y, j]));
   const matrix = ys.map(() => new Array(xs.length).fill(undefined));
   for (const p of probedPositions) {
-    matrix[yIndex.get(round(p.y))][xIndex.get(round(p.x))] = p.z;
+    matrix[yIndex.get(roundProbeXY(p.y))][xIndex.get(roundProbeXY(p.x))] = p.z;
   }
   return { xs, ys, matrix };
 };
 
-// Largest cell index i with values[i] <= v, clamped to a valid cell [0, n-2] so
-// points outside the grid extrapolate from the nearest edge cell.
+// Largest cell index i with values[i] <= v, clamped to a valid cell [0, n-2].
+// Combined with clamped bilinear weights, out-of-map queries use the nearest edge height.
 const findCell = (values, v) => {
   let i = 0;
   while ((i < values.length - 2) && (values[i + 1] <= v)) {
@@ -247,8 +252,9 @@ const bilinearZ = (grid, x, y) => {
   if (z00 === undefined || z10 === undefined || z01 === undefined || z11 === undefined) {
     return null;
   }
-  const a = (x - xs[i]) / (xs[i + 1] - xs[i]);
-  const b = (y - ys[j]) / (ys[j + 1] - ys[j]);
+  // Clamp to the edge of the nearest cell so out-of-map XY cannot amplify Z.
+  const a = Math.min(1, Math.max(0, (x - xs[i]) / (xs[i + 1] - xs[i])));
+  const b = Math.min(1, Math.max(0, (y - ys[j]) / (ys[j + 1] - ys[j])));
   return z00 * (1 - a) * (1 - b) +
     z10 * a * (1 - b) +
     z01 * (1 - a) * b +
@@ -351,13 +357,18 @@ export const createProbeXYPoints = (options) => {
  * @returns {string} Compensated G-code string
  */
 export const applyProbeCompensation = (gcodeStr, probeData = []) => {
+  if (typeof gcodeStr === 'string' && gcodeStr.includes(AUTOLEVEL_APPLIED_MARKER)) {
+    throw new Error('G-code is already autolevel-compensated; refusing to apply again');
+  }
   if (!Array.isArray(probeData) || probeData.length < 3) {
     throw new Error('At least 3 valid probe points are required');
   }
   if (probeData.some(p => !p || !['x', 'y', 'z'].every(axis => Number.isFinite(p[axis])))) {
     throw new Error('Probe coordinates must be finite numbers');
   }
-  const keys = new Set(probeData.map(p => `${p.x},${p.y}`));
+  // Use the same micron rounding as the bilinear grid so near-duplicates cannot
+  // silently overwrite a cell height after validation.
+  const keys = new Set(probeData.map(p => `${roundProbeXY(p.x)},${roundProbeXY(p.y)}`));
   if (keys.size !== probeData.length) {
     throw new Error('Probe data contains duplicate XY positions');
   }
@@ -377,12 +388,13 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
   log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points)...`);
 
   const lines = gcodeStr.split('\n');
-  const results = [];
+  const results = [`; ${AUTOLEVEL_APPLIED_MARKER}`];
 
   let p0 = { x: 0, y: 0, z: 0 };
   let p0Initialized = false;
   let pt = {};
-  let motion = 'G0';
+  // null until G0/G1 is seen — do not invent rapids on bare-XYZ continuations.
+  let motion = null;
   let selectedUnits = null;
   let units = METRIC_UNITS;
 
@@ -437,10 +449,6 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       p0Initialized = false;
       return;
     }
-    if (gCodes.includes(4)) {
-      results.push(line);
-      return;
-    }
 
     // Extract coordinate values from words (single pass)
     const coordinate = (() => {
@@ -453,6 +461,16 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       }
       return result;
     })();
+
+    if (gCodes.includes(4)) {
+      // Pure dwell is fine; dwell mixed with XYZ would skip pose updates and
+      // leave uncompensated motion in the output.
+      if (coordinate.x !== undefined || coordinate.y !== undefined || coordinate.z !== undefined) {
+        throw new Error(`G4 with XYZ on line ${lineIndex + 1} is not supported; put dwell on its own line`);
+      }
+      results.push(line);
+      return;
+    }
 
     // If no coordinate change, copy line as-is
     if ((coordinate.x === undefined) && (coordinate.y === undefined) && (coordinate.z === undefined)) {
@@ -516,7 +534,8 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       for (let i = 1; i < segments.length; i++) {
         const seg = segments[i];
         const cpt = compensatePoint(seg, surface, units);
-        const prefix = i === 1 ? lineWithoutXYZ : motion;
+        // Keep controller modal motion when the source line omitted G0/G1.
+        const prefix = i === 1 ? lineWithoutXYZ : (motion || '');
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
         results.push(newLine.trim());
       }

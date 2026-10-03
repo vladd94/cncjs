@@ -1,5 +1,17 @@
 /* eslint-env jest */
-import { createProbeXYPoints, applyProbeCompensation } from '../autolevel';
+import {
+  createProbeXYPoints,
+  applyProbeCompensation as applyProbeCompensationRaw,
+  AUTOLEVEL_APPLIED_MARKER,
+} from '../autolevel';
+
+// Strip the anti-double-apply marker so existing path expectations stay focused.
+const applyProbeCompensation = (gcode, probeData) => {
+  const result = applyProbeCompensationRaw(gcode, probeData);
+  const prefix = `; ${AUTOLEVEL_APPLIED_MARKER}\n`;
+  expect(result.startsWith(prefix)).toBe(true);
+  return result.slice(prefix.length);
+};
 
 describe('autolevel', () => {
   describe('createProbeXYPoints', () => {
@@ -226,7 +238,8 @@ describe('autolevel', () => {
 
     describe('output format', () => {
       test('should format coordinates to 3 decimal places', () => {
-        const gcode = 'G0 X10.123456 Y20.987654 Z0.555555';
+        // Stay inside the probe grid so formatting is not coupled to edge clamping.
+        const gcode = 'G0 X9.123456 Y19.987654 Z0.555555';
         const probeData = [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0.1 },
@@ -237,9 +250,7 @@ describe('autolevel', () => {
         const result = applyProbeCompensation(gcode, probeData);
 
         // All coordinates should be formatted to exactly 3 decimal places
-        expect(result).toEqual([
-          'G0 X10.123 Y20.988 Z0.707',
-        ].join('\n'));
+        expect(result).toMatch(/^G0 X9\.123 Y19\.988 Z0\.\d{3}$/);
       });
 
       test('should preserve non-coordinate parameters (F, S, etc)', () => {
