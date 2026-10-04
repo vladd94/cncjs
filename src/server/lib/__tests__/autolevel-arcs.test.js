@@ -142,4 +142,11 @@ describe('autolevel arc tessellation', () => {
     expect(modalPoints[modalPoints.length - 1].x).toBeCloseTo(10, 3);
     expect(modalPoints[modalPoints.length - 1].y).toBeCloseTo(0, 3);
   });
+
+  test('a huge radius is capped instead of allocating millions of chords', () => {
+    const points = g1Points(body('G0 X100000000000000 Y0 Z0\nG3 X100000000000000 Y0 I-100000000000000 J0'));
+    expect(points.length).toBeGreaterThan(8);
+    expect(points.length).toBeLessThan(5000);
+    expect(points[points.length - 1].x).toBeCloseTo(100000000000000, -3);
+  });
 });

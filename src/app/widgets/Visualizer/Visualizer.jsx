@@ -249,7 +249,9 @@ class Visualizer extends Component {
 
       // Enable or disable 3D view
       if ((prevProps.show !== this.props.show) && (this.props.show === true)) {
-        this.viewport.update();
+        if (this.viewport) {
+          this.viewport.update();
+        }
 
         // Set forceUpdate to true when enabling or disabling 3D view
         forceUpdate = true;
@@ -410,6 +412,13 @@ class Visualizer extends Component {
       const tokens = [
         pubsub.subscribe('resize', (msg) => {
           this.resizeRenderer();
+          // A pane that was display:none can still report 0 size in the same
+          // turn it becomes visible. Draw again after layout.
+          if (!this.isRendererVisible()) {
+            requestAnimationFrame(() => {
+              this.resizeRenderer();
+            });
+          }
         }),
         pubsub.subscribe('autolevel:showProbeVisualization', (msg, data) => {
           this.showProbeVisualization(data);
@@ -644,6 +653,10 @@ class Visualizer extends Component {
       if (!this.viewport) {
         // Defaults to 300x300mm
         this.viewport = new Viewport(this.camera, CAMERA_VIEWPORT_WIDTH, CAMERA_VIEWPORT_HEIGHT);
+      } else if (this.viewport.pendingFit) {
+        // A fit requested while the canvas had no size (hidden pane) can
+        // apply now that the camera aspect is real.
+        this.viewport.update();
       }
 
       this.controls.handleResize();
@@ -1291,16 +1304,19 @@ class Visualizer extends Component {
       this.updateLimitsPosition();
       this.updateProbeVisualizationPosition();
 
-      if (this.viewport && dX > 0 && dY > 0) {
-        // The minimum viewport is 50x50mm
+      if (this.viewport && (dX > 0 || dY > 0)) {
+        // The minimum viewport is 50x50mm. A path that is flat in X or Y
+        // (a G18/G19 arc seen from above) still needs a fit.
         const width = Math.max(dX, 50);
         const height = Math.max(dY, 50);
         const target = new THREE.Vector3(0, 0, bbox.max.z);
         this.viewport.set(width, height, target);
       }
 
-      // Update the scene
-      this.updateScene();
+      // Paint even while the "3D rendering" overlay has hidden the canvas.
+      // A normal updateScene() bails out in that moment and the old probe
+      // frame stays on screen.
+      this.updateScene({ forceUpdate: true });
 
       (typeof callback === 'function') && callback({ bbox: bbox });
     }

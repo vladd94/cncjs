@@ -67,8 +67,16 @@ class Viewport {
       const visibleHeight = Math.abs(this.camera.top - this.camera.bottom);
 
       if (this.camera.inOrthographicMode) {
-        // Orthographic Projection
-        const zoom = Math.min(visibleWidth / width, visibleHeight / height);
+        // CombinedCamera's zoom=1 frustum comes from fov and the perspective
+        // near/far, not from canvas pixels. Using the pixel size here zoomed
+        // in past a large outline (a contour) while a smaller pattern (holes)
+        // still fit.
+        const zoom = this.orthographicZoom(width, height);
+        if (!(zoom > 0)) {
+          this.pendingFit = true;
+          return;
+        }
+        this.pendingFit = false;
         this.camera.setZoom(zoom);
       } else {
         // Perspective Projection
@@ -107,6 +115,29 @@ class Viewport {
 
         this.camera.setFov(Math.max(fov, FOV_MIN));
       }
+    }
+
+    // World units visible at zoom=1, matching CombinedCamera.toOrthographic.
+    orthographicZoom(width, height) {
+      const persp = this.camera.cameraP;
+      if (!persp || !(width > 0) || !(height > 0)) {
+        return 0;
+      }
+
+      const aspect = persp.aspect;
+      const fov = this.camera.fov;
+      const { near, far } = persp;
+      if (!(aspect > 0) || !(fov > 0) || !(far > near)) {
+        return 0;
+      }
+
+      const hyperfocus = (near + far) / 2;
+      const halfHeight = Math.tan((fov * Math.PI) / 180 / 2) * hyperfocus;
+      const halfWidth = halfHeight * aspect;
+      // Leave a margin so a path that sits on the bounding box is not clipped.
+      const zoom = Math.min((halfWidth * 2) / width, (halfHeight * 2) / height) * 0.92;
+
+      return Number.isFinite(zoom) && zoom > 0 ? zoom : 0;
     }
 }
 

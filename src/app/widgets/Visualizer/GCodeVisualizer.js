@@ -37,6 +37,12 @@ class GCodeVisualizer {
       addLine: (modal, v1, v2) => {
         const { motion } = modal;
         const color = motionColor[motion] || defaultColor;
+        // The strip only stores endpoints. Without the first start point,
+        // the rapid from work zero (where the cutter sits) is never drawn.
+        if (this.geometry.vertices.length === 0) {
+          this.geometry.vertices.push(new THREE.Vector3(v1.x, v1.y, v1.z));
+          this.geometry.colors.push(color);
+        }
         this.geometry.vertices.push(new THREE.Vector3(v2.x, v2.y, v2.z));
         this.geometry.colors.push(color);
       },
@@ -102,13 +108,17 @@ class GCodeVisualizer {
     const workpiece = new THREE.Line(
       new THREE.Geometry(),
       new THREE.LineBasicMaterial({
-        color: defaultColor,
+        // White so the per-move colors (green rapid, blue feed) are not dimmed.
+        color: 0xffffff,
         linewidth: 1,
         vertexColors: THREE.VertexColors,
-        opacity: 0.5,
-        transparent: true
+        opacity: 1,
+        transparent: true,
+        depthWrite: false
       })
     );
+    // Draw after the probe sheet (renderOrder 1) so cuts below the surface stay visible.
+    workpiece.renderOrder = 2;
     workpiece.geometry.vertices = this.geometry.vertices.slice();
     workpiece.geometry.colors = this.geometry.colors.slice();
 

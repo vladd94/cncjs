@@ -296,6 +296,7 @@ class VisualizerWidget extends PureComponent {
             rendering: capable.view3D,
             ready: !capable.view3D,
             content: gcode,
+            name: name || state.gcode.name,
             isProbeCompensationApplied: isProbeCompensationApplied,
             bbox: {
               min: {

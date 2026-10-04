@@ -38,6 +38,18 @@ export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 // grid; this only controls G2/G3 so small holes are not collapsed into chords.
 export const ARC_CHORD_ERROR_MM = 0.02;
 
+// One enormous arc (or a chord step that underflows to 0) must not allocate
+// millions of points. Past this, chords get coarser instead of growing.
+const MAX_ARC_STEPS = 4096;
+
+// A single move chopped by a tiny detected gap. Hit this and throw; do not
+// keep allocating until V8 abort()s.
+const MAX_POINTS_PER_MOVE = 20000;
+
+// Whole compensated program. The request handler can return this error;
+// an unbounded join cannot.
+const MAX_OUTPUT_LINES = 200000;
+
 // Match buildProbeGrid / duplicate detection (1 µm).
 const roundProbeXY = (v) => Math.round(v * 1000) / 1000;
 
@@ -103,6 +115,14 @@ const subdivideSegment = (p1, p2, maxSegmentLength) => {
     return [];
   }
 
+  // A zero or non-finite step makes `d += step` spin forever.
+  if (!Number.isFinite(maxSegmentLength) || maxSegmentLength <= 0) {
+    return [
+      { x: p1.x, y: p1.y, z: p1.z },
+      { x: p2.x, y: p2.y, z: p2.z },
+    ];
+  }
+
   // Direction vector
   const dir = {
     x: v.x / dist,
@@ -115,6 +135,9 @@ const subdivideSegment = (p1, p2, maxSegmentLength) => {
 
   // Intermediate points
   for (let d = maxSegmentLength; d < dist; d += maxSegmentLength) {
+    if (result.length >= MAX_POINTS_PER_MOVE) {
+      throw new Error('Probe spacing is too fine to compensate this move without running out of memory');
+    }
     const pt = {
       x: p1.x + dir.x * d,
       y: p1.y + dir.y * d,
@@ -217,7 +240,12 @@ const linearizeArc = (start, end, offsets, plane, clockwise, maxChordError) => {
 
   const chordError = Math.min(Math.max(maxChordError, 1e-6), radius0 * 0.5);
   const dTheta = 2 * Math.acos(Math.min(1, Math.max(-1, 1 - (chordError / radius0))));
-  const steps = Math.max(1, Math.ceil(Math.abs(delta) / Math.max(dTheta, 1e-6)));
+  // dTheta is 0 when chord/radius underflows, and `abs(delta) / 1e-6` is then
+  // millions of steps. Cap the count so a huge radius stays a normal array.
+  let steps = Math.max(1, Math.ceil(Math.abs(delta) / Math.max(dTheta, 1e-9)));
+  if (steps > MAX_ARC_STEPS) {
+    steps = MAX_ARC_STEPS;
+  }
   const points = [toPoint(axis0Start, axis1Start, linear0)];
   for (let s = 1; s <= steps; s++) {
     const t = s / steps;
@@ -323,16 +351,30 @@ const findCell = (values, v) => {
   return i;
 };
 
-// Smallest gap between consecutive sorted grid coordinates (assumes >= 2 values).
+// Typical gap between consecutive sorted grid coordinates (assumes >= 2 values).
+// A 1 µm quantisation glitch must not become the subdivision size: that turns
+// one move into hundreds of thousands of G1 lines and aborts the process.
 const minSpacing = (sorted) => {
-  let min = Infinity;
+  const gaps = [];
   for (let k = 1; k < sorted.length; k += 1) {
     const gap = sorted[k] - sorted[k - 1];
-    if (gap > 0 && gap < min) {
+    if (gap > 0) {
+      gaps.push(gap);
+    }
+  }
+  if (gaps.length === 0) {
+    return Infinity;
+  }
+  const ordered = gaps.slice().sort((a, b) => a - b);
+  const median = ordered[Math.floor((ordered.length - 1) / 2)];
+  const noise = Math.max(median * 0.05, 1e-6);
+  let min = Infinity;
+  for (const gap of gaps) {
+    if (gap >= noise && gap < min) {
       min = gap;
     }
   }
-  return min;
+  return Number.isFinite(min) ? min : median;
 };
 
 /**
@@ -654,9 +696,16 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
     const maxSegmentLength = (units === IMPERIAL_UNITS ? mm2in(step) : step) / 2;
     const arcChordError = units === IMPERIAL_UNITS ? mm2in(ARC_CHORD_ERROR_MM) : ARC_CHORD_ERROR_MM;
 
+    const pushLine = (line) => {
+      if (results.length >= MAX_OUTPUT_LINES) {
+        throw new Error(`Compensated G-code would exceed ${MAX_OUTPUT_LINES} lines. The probe spacing is too fine for this program.`);
+      }
+      results.push(line);
+    };
+
     const emitSegments = (segments, firstPrefix, restPrefix) => {
       if (segments.length === 0 && firstPrefix) {
-        results.push(firstPrefix);
+        pushLine(firstPrefix);
         return;
       }
       for (let i = 1; i < segments.length; i++) {
@@ -664,7 +713,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
         const cpt = compensatePoint(seg, surface, units);
         const prefix = i === 1 ? firstPrefix : restPrefix;
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
-        results.push(newLine.trim());
+        pushLine(newLine.trim());
       }
     };
 

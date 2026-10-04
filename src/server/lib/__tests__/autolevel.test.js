@@ -376,12 +376,7 @@ describe('autolevel', () => {
 
     // A machine reports a probed XY quantised by its motor steps: the same
     // commanded Y comes back as 10.000 at one node and 9.999 at the next.
-    //
-    // These characterise the compensation's sensitivity to that input -- they
-    // are the reason the controllers now record the intended grid node's XY,
-    // not a regression test for the controllers themselves, which have no test
-    // harness in this repo. Hardening the library against degenerate spacing
-    // would be a fix, not a regression, and would change what they assert.
+    // That 0.001 mm gap must not become the subdivision size.
     describe('quantised probe XY', () => {
       const saddleZ = (x, y) => (x / 10) * (y / 10); // bilinear and plane fit disagree here
       const exactGrid = [];
@@ -395,7 +390,7 @@ describe('autolevel', () => {
         (p.y === 10 && p.x !== 10) ? { ...p, y: 9.999 } : p
       ));
 
-      test('collapses the detected grid spacing, exploding the output', () => {
+      test('ignores a 0.001 mm quantisation gap when choosing the segment length', () => {
         const gcode = 'G0 X0 Y5 Z0\nG0 X20 Y5 Z0';
         const exact = applyProbeCompensation(gcode, exactGrid).split('\n');
         const quantised = applyProbeCompensation(gcode, quantisedGrid).split('\n');
@@ -403,11 +398,21 @@ describe('autolevel', () => {
         // 10mm grid -> 5mm segments -> the 20mm move splits into 4.
         expect(exact).toHaveLength(5);
 
-        // The split row leaves a Y gap of 0.001mm, which becomes the detected
-        // step, and the move is subdivided three orders of magnitude finer.
-        // The exact count follows the library's segmentation rule, so assert
-        // the collapse rather than the number it happens to produce today.
-        expect(quantised.length).toBeGreaterThan(exact.length * 1000);
+        // The split row's 0.001 mm gap is noise next to the 10 mm pitch, so
+        // the move stays a handful of lines instead of tens of thousands.
+        expect(quantised.length).toBeLessThan(exact.length * 3);
+      });
+
+      test('throws instead of allocating millions of lines on a micron grid', () => {
+        const probeData = [
+          { x: 0, y: 0, z: 0 },
+          { x: 0.01, y: 0, z: 0 },
+          { x: 0, y: 0.01, z: 0 },
+          { x: 0.01, y: 0.01, z: 0 },
+        ];
+        const gcode = 'G0 X0 Y0 Z0\nG1 X200 Y0 Z0';
+
+        expect(() => applyProbeCompensation(gcode, probeData)).toThrow(/running out of memory/);
       });
 
       test('punches holes in the lattice, falling back to the plane fit', () => {
