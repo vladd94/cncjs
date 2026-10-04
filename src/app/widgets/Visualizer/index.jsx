@@ -296,6 +296,7 @@ class VisualizerWidget extends PureComponent {
             rendering: capable.view3D,
             ready: !capable.view3D,
             content: gcode,
+            name: name || state.gcode.name,
             isProbeCompensationApplied: isProbeCompensationApplied,
             bbox: {
               min: {
@@ -861,14 +862,26 @@ class VisualizerWidget extends PureComponent {
       // Defaults to false so loading a new G-code clears the compensation badge
       this.pubsubTokens.push(
         pubsub.subscribe('gcode:load', (_msg, data) => {
-          if (data && typeof data === 'object') {
-            this.setState((state) => ({
-              gcode: {
-                ...state.gcode,
-                isProbeCompensationApplied: !!data.isProbeCompensationApplied
-              }
-            }));
+          if (!data || typeof data !== 'object') {
+            return;
           }
+
+          // Autolevel publishes the corrected program here. A controller load
+          // also echoes gcode:load over the socket, so skip a second render
+          // when that same text is already on screen.
+          if (data.isProbeCompensationApplied && data.gcode) {
+            if (this.state.gcode.content !== data.gcode || !this.state.gcode.ready) {
+              this.actions.loadGCode(data.name, data.gcode, true);
+              return;
+            }
+          }
+
+          this.setState((state) => ({
+            gcode: {
+              ...state.gcode,
+              isProbeCompensationApplied: !!data.isProbeCompensationApplied
+            }
+          }));
         })
       );
 

@@ -161,6 +161,33 @@ const migrateStore = () => {
       store.set('widgets.webcam.mediaSource', 'stream');
     }
   }
+
+  // Move Axes into the primary container (Controls tab on mobile).
+  // One-time: users can still rearrange via Manage Widgets afterward.
+  if (!store.get('workspace.container.migratedAxesToPrimary')) {
+    let primaryWidgets = ensureArray(store.get('workspace.container.primary.widgets'));
+    let secondaryWidgets = ensureArray(store.get('workspace.container.secondary.widgets'));
+    const axesInPrimary = primaryWidgets.indexOf('axes');
+    const axesInSecondary = secondaryWidgets.indexOf('axes');
+
+    if (axesInPrimary < 0 && axesInSecondary >= 0) {
+      const connectionIdx = primaryWidgets.indexOf('connection');
+      if (connectionIdx >= 0) {
+        primaryWidgets = [
+          ...primaryWidgets.slice(0, connectionIdx + 1),
+          'axes',
+          ...primaryWidgets.slice(connectionIdx + 1),
+        ];
+      } else {
+        primaryWidgets = ['axes', ...primaryWidgets];
+      }
+      secondaryWidgets = secondaryWidgets.filter((widgetId) => widgetId !== 'axes');
+      store.set('workspace.container.primary.widgets', primaryWidgets);
+      store.set('workspace.container.secondary.widgets', secondaryWidgets);
+    }
+
+    store.set('workspace.container.migratedAxesToPrimary', true);
+  }
 };
 
 (async () => {

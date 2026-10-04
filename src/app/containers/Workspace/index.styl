@@ -163,13 +163,18 @@
             color: #fff;
         }
 
-        .workspace-table,
-        .workspace-table-row {
+        .workspace-table {
             display: block;
             height: auto;
             min-height: calc(100vh - var(--cnc-header-h, 52px) - var(--cnc-top-chrome-h, 128px) - var(--cnc-bottom-nav-h, 64px));
-            // Reserve space under the fixed machine + pane chrome.
+            // Reserve space under the fixed machine + pane chrome (once only —
+            // applying this to the nested row doubles the gap).
             padding-top: var(--cnc-top-chrome-h, 128px);
+        }
+
+        .workspace-table-row {
+            display: block;
+            height: auto;
         }
 
         .primary-container,

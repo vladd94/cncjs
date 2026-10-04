@@ -34,6 +34,22 @@ const DEFAULT_GRID_STEP = 5;
 // Written as the first line of compensated output; refuse to apply again if present.
 export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 
+// Max sagitta of a linearized arc, in mm. Linear moves still follow the probe
+// grid; this only controls G2/G3 so small holes are not collapsed into chords.
+export const ARC_CHORD_ERROR_MM = 0.02;
+
+// One enormous arc (or a chord step that underflows to 0) must not allocate
+// millions of points. Past this, chords get coarser instead of growing.
+const MAX_ARC_STEPS = 4096;
+
+// A single move chopped by a tiny detected gap. Hit this and throw; do not
+// keep allocating until V8 abort()s.
+const MAX_POINTS_PER_MOVE = 20000;
+
+// Whole compensated program. The request handler can return this error;
+// an unbounded join cannot.
+const MAX_OUTPUT_LINES = 200000;
+
 // Match buildProbeGrid / duplicate detection (1 µm).
 const roundProbeXY = (v) => Math.round(v * 1000) / 1000;
 
@@ -99,6 +115,14 @@ const subdivideSegment = (p1, p2, maxSegmentLength) => {
     return [];
   }
 
+  // A zero or non-finite step makes `d += step` spin forever.
+  if (!Number.isFinite(maxSegmentLength) || maxSegmentLength <= 0) {
+    return [
+      { x: p1.x, y: p1.y, z: p1.z },
+      { x: p2.x, y: p2.y, z: p2.z },
+    ];
+  }
+
   // Direction vector
   const dir = {
     x: v.x / dist,
@@ -111,6 +135,9 @@ const subdivideSegment = (p1, p2, maxSegmentLength) => {
 
   // Intermediate points
   for (let d = maxSegmentLength; d < dist; d += maxSegmentLength) {
+    if (result.length >= MAX_POINTS_PER_MOVE) {
+      throw new Error('Probe spacing is too fine to compensate this move without running out of memory');
+    }
     const pt = {
       x: p1.x + dir.x * d,
       y: p1.y + dir.y * d,
@@ -139,78 +166,94 @@ const normalizeAngleDelta = (delta, clockwise) => {
 
 /**
  * Linearize a G2/G3 arc (IJK form) into XYZ points for Z compensation.
- * Supports G17 (XY+helical Z), G18 (ZX+helical Y), and G19 (YZ+helical X).
+ * Plane axes follow GRBL: G17 XY, G18 ZX (axis0=Z, axis1=X), G19 YZ.
+ * Positive sweep is G3. Step size comes from chord error, not probe spacing.
  */
-const linearizeArc = (start, end, offsets, plane, clockwise, maxSegmentLength) => {
-  let u0;
-  let v0;
-  let u1;
-  let v1;
-  let cu;
-  let cv;
+const linearizeArc = (start, end, offsets, plane, clockwise, maxChordError) => {
+  const i = Number.isFinite(offsets.i) ? offsets.i : 0;
+  const j = Number.isFinite(offsets.j) ? offsets.j : 0;
+  const k = Number.isFinite(offsets.k) ? offsets.k : 0;
+  let axis0Start;
+  let axis1Start;
+  let axis0End;
+  let axis1End;
+  let center0;
+  let center1;
   let linear0;
   let linear1;
   let toPoint;
 
   if (plane === 18) {
-    // ZX plane: U=X, V=Z, linear=Y
-    u0 = start.x;
-    v0 = start.z;
-    u1 = end.x;
-    v1 = end.z;
-    cu = start.x + (Number.isFinite(offsets.i) ? offsets.i : 0);
-    cv = start.z + (Number.isFinite(offsets.k) ? offsets.k : 0);
+    // G18: axis0=Z, axis1=X, linear=Y. G3 sweeps from +Z toward +X.
+    axis0Start = start.z;
+    axis1Start = start.x;
+    axis0End = end.z;
+    axis1End = end.x;
+    center0 = start.z + k;
+    center1 = start.x + i;
     linear0 = start.y;
     linear1 = end.y;
-    toPoint = (u, v, linear) => ({ x: u, y: linear, z: v });
+    toPoint = (axis0, axis1, linear) => ({ x: axis1, y: linear, z: axis0 });
   } else if (plane === 19) {
-    // YZ plane: U=Y, V=Z, linear=X
-    u0 = start.y;
-    v0 = start.z;
-    u1 = end.y;
-    v1 = end.z;
-    cu = start.y + (Number.isFinite(offsets.j) ? offsets.j : 0);
-    cv = start.z + (Number.isFinite(offsets.k) ? offsets.k : 0);
+    // G19: axis0=Y, axis1=Z, linear=X. G3 sweeps from +Y toward +Z.
+    axis0Start = start.y;
+    axis1Start = start.z;
+    axis0End = end.y;
+    axis1End = end.z;
+    center0 = start.y + j;
+    center1 = start.z + k;
     linear0 = start.x;
     linear1 = end.x;
-    toPoint = (u, v, linear) => ({ x: linear, y: u, z: v });
+    toPoint = (axis0, axis1, linear) => ({ x: linear, y: axis0, z: axis1 });
   } else {
-    // G17 XY plane: U=X, V=Y, linear=Z
-    u0 = start.x;
-    v0 = start.y;
-    u1 = end.x;
-    v1 = end.y;
-    cu = start.x + (Number.isFinite(offsets.i) ? offsets.i : 0);
-    cv = start.y + (Number.isFinite(offsets.j) ? offsets.j : 0);
+    // G17: axis0=X, axis1=Y, linear=Z. G3 sweeps from +X toward +Y.
+    axis0Start = start.x;
+    axis1Start = start.y;
+    axis0End = end.x;
+    axis1End = end.y;
+    center0 = start.x + i;
+    center1 = start.y + j;
     linear0 = start.z;
     linear1 = end.z;
-    toPoint = (u, v, linear) => ({ x: u, y: v, z: linear });
+    toPoint = (axis0, axis1, linear) => ({ x: axis0, y: axis1, z: linear });
   }
 
-  const radius0 = Math.hypot(u0 - cu, v0 - cv);
-  const radius1 = Math.hypot(u1 - cu, v1 - cv);
+  const radius0 = Math.hypot(axis0Start - center0, axis1Start - center1);
+  const radius1 = Math.hypot(axis0End - center0, axis1End - center1);
   if (!(radius0 > 1e-9) || Math.abs(radius0 - radius1) > 0.05) {
     throw new Error('Invalid arc offsets for compensation');
   }
 
-  const theta0 = Math.atan2(v0 - cv, u0 - cu);
-  const theta1 = Math.atan2(v1 - cv, u1 - cu);
-  let delta = normalizeAngleDelta(theta1 - theta0, clockwise);
-  if (Math.abs(delta) < 1e-12) {
-    // Full circle or zero-length; treat as zero move
-    return [];
+  const theta0 = Math.atan2(axis1Start - center1, axis0Start - center0);
+  const theta1 = Math.atan2(axis1End - center1, axis0End - center0);
+  const sameEndpoint = Math.hypot(axis0End - axis0Start, axis1End - axis1Start) < 1e-6;
+  let delta;
+  if (sameEndpoint) {
+    // Identical plane endpoints with a real radius are a full turn, not a no-op.
+    delta = clockwise ? -(2 * Math.PI) : (2 * Math.PI);
+  } else {
+    delta = normalizeAngleDelta(theta1 - theta0, clockwise);
+    if (Math.abs(delta) < 1e-12) {
+      return [];
+    }
   }
 
-  const arcLen = Math.abs(delta) * radius0;
-  const steps = Math.max(1, Math.ceil(arcLen / Math.max(maxSegmentLength, 1e-6)));
-  const points = [toPoint(u0, v0, linear0)];
+  const chordError = Math.min(Math.max(maxChordError, 1e-6), radius0 * 0.5);
+  const dTheta = 2 * Math.acos(Math.min(1, Math.max(-1, 1 - (chordError / radius0))));
+  // dTheta is 0 when chord/radius underflows, and `abs(delta) / 1e-6` is then
+  // millions of steps. Cap the count so a huge radius stays a normal array.
+  let steps = Math.max(1, Math.ceil(Math.abs(delta) / Math.max(dTheta, 1e-9)));
+  if (steps > MAX_ARC_STEPS) {
+    steps = MAX_ARC_STEPS;
+  }
+  const points = [toPoint(axis0Start, axis1Start, linear0)];
   for (let s = 1; s <= steps; s++) {
     const t = s / steps;
     const theta = theta0 + (delta * t);
-    const u = cu + (radius0 * Math.cos(theta));
-    const v = cv + (radius0 * Math.sin(theta));
+    const axis0 = center0 + (radius0 * Math.cos(theta));
+    const axis1 = center1 + (radius0 * Math.sin(theta));
     const linear = linear0 + ((linear1 - linear0) * t);
-    points.push(toPoint(u, v, linear));
+    points.push(toPoint(axis0, axis1, linear));
   }
   // Snap endpoint exactly
   points[points.length - 1] = { x: end.x, y: end.y, z: end.z };
@@ -308,16 +351,30 @@ const findCell = (values, v) => {
   return i;
 };
 
-// Smallest gap between consecutive sorted grid coordinates (assumes >= 2 values).
+// Typical gap between consecutive sorted grid coordinates (assumes >= 2 values).
+// A 1 µm quantisation glitch must not become the subdivision size: that turns
+// one move into hundreds of thousands of G1 lines and aborts the process.
 const minSpacing = (sorted) => {
-  let min = Infinity;
+  const gaps = [];
   for (let k = 1; k < sorted.length; k += 1) {
     const gap = sorted[k] - sorted[k - 1];
-    if (gap > 0 && gap < min) {
+    if (gap > 0) {
+      gaps.push(gap);
+    }
+  }
+  if (gaps.length === 0) {
+    return Infinity;
+  }
+  const ordered = gaps.slice().sort((a, b) => a - b);
+  const median = ordered[Math.floor((ordered.length - 1) / 2)];
+  const noise = Math.max(median * 0.05, 1e-6);
+  let min = Infinity;
+  for (const gap of gaps) {
+    if (gap >= noise && gap < min) {
       min = gap;
     }
   }
-  return min;
+  return Number.isFinite(min) ? min : median;
 };
 
 /**
@@ -625,20 +682,30 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
         if (letter === 'X' || letter === 'Y' || letter === 'Z' || letter === 'I' || letter === 'J' || letter === 'K') {
           return false;
         }
-        if (/^G[23]$/i.test(word)) {
+        const code = Number(word.slice(1));
+        if (/^G/i.test(word) && (code === 2 || code === 3)) {
           return false;
         }
         return true;
       })
       .join(' ');
 
-    // Calculate max segment length based on step size and units
+    // Linear moves follow the probe grid. Arcs use a chord-error budget so a
+    // hole smaller than the grid is not replaced by one chord.
     const step = Math.min(stepX, stepY);
     const maxSegmentLength = (units === IMPERIAL_UNITS ? mm2in(step) : step) / 2;
+    const arcChordError = units === IMPERIAL_UNITS ? mm2in(ARC_CHORD_ERROR_MM) : ARC_CHORD_ERROR_MM;
+
+    const pushLine = (line) => {
+      if (results.length >= MAX_OUTPUT_LINES) {
+        throw new Error(`Compensated G-code would exceed ${MAX_OUTPUT_LINES} lines. The probe spacing is too fine for this program.`);
+      }
+      results.push(line);
+    };
 
     const emitSegments = (segments, firstPrefix, restPrefix) => {
       if (segments.length === 0 && firstPrefix) {
-        results.push(firstPrefix);
+        pushLine(firstPrefix);
         return;
       }
       for (let i = 1; i < segments.length; i++) {
@@ -646,7 +713,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
         const cpt = compensatePoint(seg, surface, units);
         const prefix = i === 1 ? firstPrefix : restPrefix;
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
-        results.push(newLine.trim());
+        pushLine(newLine.trim());
       }
     };
 
@@ -661,7 +728,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
     } else if (isArc) {
       let segments;
       try {
-        segments = linearizeArc(p0, pt, offsets, plane, motion === 'G2', maxSegmentLength);
+        segments = linearizeArc(p0, pt, offsets, plane, motion === 'G2', arcChordError);
       } catch (err) {
         throw new Error(`${err.message} (line ${lineIndex + 1})`);
       }

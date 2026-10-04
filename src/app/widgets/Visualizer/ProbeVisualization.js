@@ -282,11 +282,15 @@ class ProbeVisualization {
     const material = new THREE.MeshBasicMaterial({
       vertexColors: THREE.VertexColors,
       side: THREE.DoubleSide,
-      opacity: 0.7,
+      opacity: 0.35,
       transparent: true,
+      // A depth-writing sheet hides every cut that starts at Z0 and goes
+      // below the probed surface. Leave the depth buffer to the toolpath.
+      depthWrite: false
     });
 
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 1;
     this.group.add(mesh);
   }
 

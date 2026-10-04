@@ -448,33 +448,27 @@ class AutolevelWidget extends PureComponent {
           }
 
           const name = `AL_${gcodeFileName}`;
-          const finish = (loadedName, loadedGcode) => {
-            pubsub.publish('gcode:load', {
-              name: loadedName,
-              gcode: loadedGcode,
-              isProbeCompensationApplied: true,
-            });
-            this.setState({ gcodeApplied: true });
-            log.info('Auto-level applied and G-code loaded to workspace');
-            if (onSuccess) {
-              onSuccess(compensatedGcode);
-            }
-          };
+          const activePort = port || controller.port;
+          // Show the corrected program immediately. Waiting on the controller
+          // load left the Apply screen spinning when that request never returned.
+          pubsub.publish('gcode:load', {
+            name,
+            gcode: compensatedGcode,
+            isProbeCompensationApplied: true,
+          });
+          this.setState({ gcodeApplied: true });
+          log.info('Auto-level applied and G-code loaded to workspace');
+          if (onSuccess) {
+            onSuccess(compensatedGcode);
+          }
 
-          if (port) {
-            return api.loadGCode({ port, name, gcode: compensatedGcode })
-              .then((loadRes) => {
-                const { name: loadedName = name, gcode: loadedGcode = compensatedGcode } = { ...loadRes.body };
-                finish(loadedName, loadedGcode);
-              })
+          if (activePort) {
+            api.loadGCode({ port: activePort, name, gcode: compensatedGcode })
               .catch((error) => {
-                log.error('Failed to load compensated G-code to controller, loading locally:', error);
-                // Still deliver compensated gcode to the UI when controller load fails.
-                finish(name, compensatedGcode);
+                log.error('Failed to load compensated G-code to controller:', error);
               });
           }
 
-          finish(name, compensatedGcode);
           return null;
         })
         .catch((error) => {
