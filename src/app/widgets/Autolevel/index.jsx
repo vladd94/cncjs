@@ -448,6 +448,7 @@ class AutolevelWidget extends PureComponent {
           }
 
           const name = `AL_${gcodeFileName}`;
+          const activePort = port || controller.port;
           const finish = (loadedName, loadedGcode) => {
             pubsub.publish('gcode:load', {
               name: loadedName,
@@ -461,8 +462,8 @@ class AutolevelWidget extends PureComponent {
             }
           };
 
-          if (port) {
-            return api.loadGCode({ port, name, gcode: compensatedGcode })
+          if (activePort) {
+            return api.loadGCode({ port: activePort, name, gcode: compensatedGcode })
               .then((loadRes) => {
                 const { name: loadedName = name, gcode: loadedGcode = compensatedGcode } = { ...loadRes.body };
                 finish(loadedName, loadedGcode);
