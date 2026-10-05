@@ -156,20 +156,7 @@ const GCodeName = ({ name, isProbeCompensationApplied, style, ...props }) => {
         {name}
       </div>
       {isProbeCompensationApplied && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 8,
-            right: 8,
-            fontSize: '1.2rem',
-            color: '#d9534f',
-            fontWeight: 'bold',
-            backgroundColor: 'rgba(255, 255, 255, 0.9)',
-            padding: '4px 8px',
-            borderRadius: '3px',
-            boxShadow: '0 1px 3px rgba(0,0,0,0.2)',
-          }}
-        >
+        <div className={styles.probeCompensationBadge}>
           {i18n._('Probe Compensation Applied')}
         </div>
       )}
