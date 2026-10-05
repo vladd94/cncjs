@@ -152,7 +152,7 @@
     "@trendmicro/react-toggle-switch": "~0.5.7",
     "@trendmicro/react-tooltip": "~0.6.0",
     "@trendmicro/react-validation": "~0.1.0",
-    "bcrypt-nodejs": "0.0.3",
+    "bcryptjs": "~3.0.2",
     "body-parser": "~1.18.3",
     "bootstrap": "~3.3.7",
     "chained-function": "~0.5.0",
@@ -162,12 +162,11 @@
     "colornames": "~1.1.1",
     "commander": "~9.1.0",
     "compression": "~1.7.4",
-    "connect-multiparty": "~2.2.0",
     "connect-restreamer": "~1.0.3",
-    "consolidate": "~0.15.1",
+    "consolidate": "~1.0.4",
     "cookie-parser": "~1.4.4",
     "core-js": "~3.26.1",
-    "debug": "~4.1.1",
+    "debug": "~4.4.3",
     "deep-keys": "~0.5.0",
     "detect-browser": "~4.4.0",
     "electron-store": "~8.1.0",
@@ -191,15 +190,11 @@
     "http-proxy": "~1.18.1",
     "i18next": "~25.8.17",
     "i18next-browser-languagedetector": "~8.2.1",
-    "i18next-express-middleware": "~1.8.0",
     "i18next-fs-backend": "~2.6.6",
     "i18next-http-backend": "~3.0.2",
     "i18next-http-middleware": "~3.9.2",
-    "i18next-node-fs-backend": "~2.1.3",
     "infinite-tree": "~1.16.2",
     "is-electron": "~2.2.1",
-    "jimp": "^0.10.3",
-    "js-polyfills": "~0.1.42",
     "jsonwebtoken": "~9.0.0",
     "jsuri": "~1.3.1",
     "keycode": "~2.2.0",
@@ -207,10 +202,11 @@
     "memoize-one": "~5.0.4",
     "method-override": "~3.0.0",
     "minimatch": "~3.1.4",
-    "mkdirp": "~0.5.1",
     "moment": "~2.24.0",
     "morgan": "~1.9.1",
     "mousetrap": "~1.6.3",
+    "multer": "~2.4.0",
+    "multihost": "~0.1.1",
     "namespace-constants": "~0.5.0",
     "normalize.css": "~8.0.1",
     "opencollective": "~1.0.3",
@@ -246,7 +242,6 @@
     "regenerator-runtime": "~0.13.10",
     "registry-auth-token": "~3.4.0",
     "registry-url": "~5.1.0",
-    "rimraf": "~2.6.3",
     "semver": "~6.0.0",
     "serialport": "^10.0.0",
     "serve-favicon": "~2.5.0",
@@ -260,14 +255,13 @@
     "sortablejs": "~1.9.0",
     "spawn-default-shell": "~2.0.0",
     "styled-components": "~3.4.9",
-    "superagent": "~3.8.3",
+    "superagent": "~10.2.2",
     "superagent-use": "~0.1.0",
     "three": "~0.103.0",
     "universal-logger": "~1.0.1",
     "universal-logger-browser": "~1.0.2",
-    "uuid": "~3.3.2",
+    "uuid": "~11.1.0",
     "watch": "~1.0.2",
-    "webappengine": "~1.2.0",
     "winston": "~3.14.1",
     "xterm": "~3.0.2"
   },
@@ -312,7 +306,6 @@
     "file-loader": "~6.2.0",
     "find-imports": "~1.1.0",
     "github-release-cli": "~2.0.0",
-    "glob": "~7.1.3",
     "html-webpack-plugin": "~5.6.0",
     "i18next-scanner": "~4.6.0",
     "imports-loader": "~0.8.0",
@@ -397,5 +390,17 @@
   "collective": {
     "type": "opencollective",
     "url": "https://opencollective.com/cncjs"
+  },
+  "resolutions": {
+    "socket.io/debug": "4.4.3",
+    "socket.io-client/debug": "4.4.3"
+  },
+  "overrides": {
+    "socket.io": {
+      "debug": "4.4.3"
+    },
+    "socket.io-client": {
+      "debug": "4.4.3"
+    }
   }
 }

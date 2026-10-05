@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import url from 'url';
-import bcrypt from 'bcrypt-nodejs';
+import bcrypt from 'bcryptjs';
 import chalk from 'chalk';
 import { ensureArray, ensureString } from 'ensure-type';
 import expandTilde from 'expand-tilde';
@@ -15,7 +15,6 @@ import set from 'lodash/set';
 import size from 'lodash/size';
 import trimEnd from 'lodash/trimEnd';
 import uniqWith from 'lodash/uniqWith';
-import webappengine from 'webappengine';
 import settings from './config/settings';
 import app from './app';
 import cncengine from './services/cncengine';
@@ -23,6 +22,7 @@ import monitor from './services/monitor';
 import config from './services/configstore';
 import logger, { setLevel } from './lib/logger';
 import urljoin from './lib/urljoin';
+import webappengine from './lib/webappengine';
 
 const log = logger('init');
 

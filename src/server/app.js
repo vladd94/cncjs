@@ -4,7 +4,6 @@ import path from 'path';
 import bodyParser from 'body-parser';
 import compress from 'compression';
 import cookieParser from 'cookie-parser';
-import multiparty from 'connect-multiparty';
 import connectRestreamer from 'connect-restreamer';
 import engines from 'consolidate';
 import errorhandler from 'errorhandler';
@@ -17,12 +16,12 @@ import i18nextBackend from 'i18next-fs-backend';
 import jwt from 'jsonwebtoken';
 import methodOverride from 'method-override';
 import morgan from 'morgan';
+import multer from 'multer';
 import favicon from 'serve-favicon';
 import serveStatic from 'serve-static';
 import sessionFileStore from 'session-file-store';
 import _get from 'lodash/get';
 import _noop from 'lodash/noop';
-import rimraf from 'rimraf';
 import {
   LanguageDetector as i18nextLanguageDetector,
   handle as i18nextHandle
@@ -126,7 +125,7 @@ const appMain = () => {
     // https://github.com/valery-barysok/session-file-store
     const path = settings.middleware.session.path; // Defaults to './cncjs-sessions'
 
-    rimraf.sync(path);
+    fs.rmSync(path, { recursive: true, force: true });
     fs.mkdirSync(path);
 
     const FileStore = sessionFileStore(session);
@@ -159,10 +158,8 @@ const appMain = () => {
   app.use(bodyParser.json(settings.middleware['body-parser'].json));
   app.use(bodyParser.urlencoded(settings.middleware['body-parser'].urlencoded));
 
-  // For multipart bodies, please use the following modules:
-  // - [busboy](https://github.com/mscdex/busboy) and [connect-busboy](https://github.com/mscdex/connect-busboy)
-  // - [multiparty](https://github.com/andrewrk/node-multiparty) and [connect-multiparty](https://github.com/andrewrk/connect-multiparty)
-  app.use(multiparty(settings.middleware.multiparty));
+  // Multipart form fields (e.g. G-code download). Replaces archived connect-multiparty.
+  app.use(multer(settings.middleware.multer).any());
 
   // https://github.com/dominictarr/connect-restreamer
   // connect's bodyParser has a problem when using it with a proxy.
