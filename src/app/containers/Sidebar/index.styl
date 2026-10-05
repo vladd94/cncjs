@@ -150,3 +150,49 @@
         line-height: 1.1;
     }
 }
+
+@media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+    .navbar {
+        width: auto;
+        height: auto;
+    }
+
+    .nav {
+        width: auto;
+        height: auto;
+        gap: 4px;
+
+        > li {
+            flex: 0 0 auto;
+
+            > a {
+                flex-direction: row;
+                gap: 6px;
+                width: auto;
+                height: auto;
+                min-height: 36px;
+                padding: 6px 10px;
+                border-radius: 8px;
+                font-size: 11px;
+                letter-spacing: .02em;
+                white-space: nowrap;
+
+                > .icon {
+                    width: 16px;
+                    height: 16px;
+                }
+            }
+        }
+
+        > li.active {
+            > a,
+            > a:focus,
+            > a:hover {
+                border-top: 0;
+                border-radius: 8px;
+                background: #134e4a;
+                box-shadow: inset 0 0 0 1px #2dd4bf;
+            }
+        }
+    }
+}

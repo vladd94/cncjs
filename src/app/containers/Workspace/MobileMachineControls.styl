@@ -66,3 +66,30 @@
     min-height: 54px;
   }
 }
+
+@media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+  .machine-bar {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    padding: 3px 6px;
+    padding-left: calc(6px + env(safe-area-inset-left, 0px));
+    padding-right: calc(6px + env(safe-area-inset-right, 0px));
+  }
+
+  .machine-btn {
+    flex-direction: row;
+    gap: 4px;
+    min-height: 40px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    font-size: 11px;
+
+    > .fa {
+      font-size: 14px;
+    }
+
+    > span {
+      min-width: 0;
+    }
+  }
+}

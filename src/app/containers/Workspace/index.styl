@@ -253,3 +253,26 @@
         }
     }
 }
+
+@media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+    .workspace {
+        .mobile-pane-switch {
+            gap: 4px;
+            padding: 4px 6px;
+            padding-left: calc(6px + env(safe-area-inset-left, 0px));
+            padding-right: calc(6px + env(safe-area-inset-right, 0px));
+        }
+
+        .mobile-pane-btn {
+            min-height: 32px;
+            padding: 4px 8px;
+            border-radius: 8px;
+            font-size: 12px;
+        }
+
+        .workspace-table {
+            min-height: calc(100vh - var(--cnc-header-h, 40px) - var(--cnc-top-chrome-h, 88px) - var(--cnc-bottom-nav-h, 0px));
+            min-height: calc(100dvh - var(--cnc-header-h, 40px) - var(--cnc-top-chrome-h, 88px) - var(--cnc-bottom-nav-h, 0px) - env(safe-area-inset-bottom, 0px));
+        }
+    }
+}
