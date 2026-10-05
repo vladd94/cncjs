@@ -4,6 +4,7 @@ import {
   applyProbeCompensation as applyProbeCompensationRaw,
   AUTOLEVEL_APPLIED_MARKER,
   AUTOLEVEL_REFERENCE_PREFIX,
+  surfaceZFromTrigger,
 } from '../autolevel';
 
 // Strip the anti-double-apply marker and the traced reference height.
@@ -497,6 +498,55 @@ describe('autolevel', () => {
         expect(applyProbeCompensation('G1 X25 Y25 Z-0.300', offset, { referenceProbeZ: reference }))
           .toMatch(/Z-0\.193/);
       });
+    });
+  });
+
+  describe('normalized surface maps', () => {
+    const zeros = [
+      { x: 0, y: 0, z: 0 },
+      { x: 10, y: 0, z: 0 },
+      { x: 0, y: 10, z: 0 },
+      { x: 10, y: 10, z: 0 },
+    ];
+    const high = zeros.map(point => ({ ...point, z: 0.107 }));
+    const low = zeros.map(point => ({ ...point, z: -0.153 }));
+
+    test('subtracts the configured probe height from a raw trigger', () => {
+      expect(surfaceZFromTrigger(1.760, 1.653)).toBeCloseTo(0.107, 6);
+      expect(surfaceZFromTrigger(1.500, 1.653)).toBeCloseTo(-0.153, 6);
+      expect(surfaceZFromTrigger(1.653, 1.653)).toBeCloseTo(0, 6);
+      expect(surfaceZFromTrigger(5.125, 5)).toBeCloseTo(0.125, 6);
+    });
+
+    test('a flat raw surface becomes a zero map and does not move programmed Z', () => {
+      const raw = [1.653, 1.653, 1.653, 1.653].map(z => surfaceZFromTrigger(z, 1.653));
+      expect(raw.every(z => Math.abs(z) < 1e-9)).toBe(true);
+      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', zeros, { normalized: true }))
+        .toBe('G1 X5.000 Y5.000 Z-3.200');
+    });
+
+    test('adds a positive surface deviation and ignores any reference height', () => {
+      const result = applyProbeCompensationRaw('G1 X5 Y5 Z-3.200', high, {
+        normalized: true,
+        referenceProbeZ: 1.653,
+      });
+
+      expect(result.split('\n')[1]).toBe('; cncjs-autolevel-reference-z=0.000000');
+      expect(result).toMatch(/Z-3\.093/);
+      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', high)).toBe('G1 X5.000 Y5.000 Z-3.200');
+    });
+
+    test('adds a negative surface deviation', () => {
+      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', low, { normalized: true }))
+        .toBe('G1 X5.000 Y5.000 Z-3.353');
+    });
+
+    test('does not require the work origin once the map is normalized', () => {
+      const shifted = high.map(point => ({ ...point, x: point.x + 20, y: point.y + 20 }));
+
+      expect(() => applyProbeCompensation('G1 X25 Y25 Z-3.200', shifted)).toThrow(/work origin/);
+      expect(applyProbeCompensation('G1 X25 Y25 Z-3.200', shifted, { normalized: true }))
+        .toMatch(/Z-3\.093/);
     });
   });
 });

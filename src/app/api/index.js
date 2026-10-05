@@ -156,11 +156,11 @@ const loadGCode = (options) => new Promise((resolve, reject) => {
 });
 
 const applyAutolevelCompensation = (options) => new Promise((resolve, reject) => {
-  const { gcode = '', probeData = [] } = { ...options };
+  const { gcode = '', probeData = [], normalized = false } = { ...options };
 
   authrequest
     .post('/api/autolevel/apply')
-    .send({ gcode, probeData })
+    .send({ gcode, probeData, normalized: normalized === true })
     .end((err, res) => {
       if (err) {
         reject(res);

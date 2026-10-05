@@ -160,6 +160,25 @@ describe('autolevel arc tessellation', () => {
     });
   });
 
+  test('tessellated arcs add the normalized surface Z and do not subtract it again', () => {
+    const normalized = tilt.map(point => ({ ...point, z: point.z + 0.107 }));
+    const points = g1Points(body(
+      'G17\nG0 X10 Y0 Z-0.300\nG3 X0 Y0 I-5 J0',
+      normalized,
+      { normalized: true }
+    ));
+    const crown = points.reduce((best, point) => (point.y > best.y ? point : best), points[0]);
+
+    // At X≈5 the stored surface is 0.607. Legacy compensation would subtract the
+    // 0.107 origin and leave about 0.200. Normalized compensation keeps 0.307.
+    expect(crown.z).toBeCloseTo(0.307, 1);
+    expect(crown.z).toBeGreaterThan(0.25);
+    points.forEach((point) => {
+      expect(point.z).toBeGreaterThan(-0.25);
+      expect(point.z).toBeLessThan(1.5);
+    });
+  });
+
   test('a flat probe offset leaves every arc segment at the programmed Z', () => {
     const plate = flat.map(point => ({ ...point, z: 2 }));
     const points = g1Points(body('G17\nG0 X10 Y0 Z-0.300\nG3 X0 Y0 I-5 J0', plate));

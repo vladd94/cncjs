@@ -34,9 +34,36 @@ const DEFAULT_GRID_STEP = 5;
 // Written as the first line of compensated output; refuse to apply again if present.
 export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 
-// Second header line. The value is the probe reading (mm) at the work origin,
-// which is the height that was absorbed when work Z was zeroed.
+// Second header line. Legacy raw maps record the probe reading (mm) at the work
+// origin. Normalized maps already store surface Z, so this value is 0.
 export const AUTOLEVEL_REFERENCE_PREFIX = 'cncjs-autolevel-reference-z=';
+
+export {
+  parseProbeFile,
+  readProbeSurfaceFile,
+  readProbeSurfaceText,
+  serializeProbeSurfaceFile,
+} from './probeSurfaceFile';
+
+// probeHeight is in the units of the probe G-code (G20/G21). Stored maps are mm.
+export const assignProbeHeight = (probeState, probeHeight, imperial) => {
+  const height = Number(probeHeight);
+  if (!Number.isFinite(height)) {
+    probeState.probeHeightMm = null;
+    probeState.normalized = false;
+    return;
+  }
+  probeState.probeHeightMm = imperial ? in2mm(height) : height;
+  probeState.normalized = true;
+};
+
+// rawZmm is the work-coordinate trigger. probeHeightMm is the device thickness.
+export const surfaceZFromTrigger = (rawZmm, probeHeightMm) => {
+  if (!Number.isFinite(probeHeightMm)) {
+    return rawZmm;
+  }
+  return rawZmm - probeHeightMm;
+};
 
 // Max sagitta of a linearized arc, in mm. Linear moves still follow the probe
 // grid; this only controls G2/G3 so small holes are not collapsed into chords.
@@ -439,9 +466,10 @@ const buildSurface = (probedPositions) => {
  * probe grid, falling back to a 3-point plane fit for non-grid data or grid
  * cells with missing nodes.
  *
- * Probe Z is the work-coordinate trigger height, which includes the probe
- * device. Only the difference from the work-origin reading is a surface error:
- * correctedZ = commandedZ + probeAtXY - referenceProbeZ.
+ * Legacy raw maps store the work-coordinate trigger height, so only the
+ * difference from the work-origin reading is a surface error. Normalized maps
+ * already store that error, and referenceProbeZ is 0:
+ * correctedZ = commandedZ + surfaceZ - referenceProbeZ.
  *
  * @param {Point3} pt - Point in current units
  * @param {object} surface - Probe surface from buildSurface
@@ -557,8 +585,10 @@ export const createProbeXYPoints = (options) => {
  *
  * @param {string} gcodeStr - G-code string to compensate
  * @param {array} probeData - Array of probe data [{x, y, z, a, b, c, u, v, w}, ...] or [{x, y, z}, ...]
- * @param {{ referenceProbeZ?: number }} [options] - Optional probe height (mm) at work Z zero.
- *   When omitted, the probe height interpolated at X0 Y0 is used.
+ * @param {{ referenceProbeZ?: number, normalized?: boolean }} [options]
+ *   Legacy maps use the probe height at work X0 Y0 unless referenceProbeZ is set.
+ *   normalized maps already store surface Z relative to work Z0, so the
+ *   interpolated value is added and referenceProbeZ is ignored.
  * @returns {string} Compensated G-code string
  */
 export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) => {
@@ -589,13 +619,18 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
 
   const surface = buildSurface(probedPositions);
   const { stepX, stepY } = surface;
-  const referenceProbeZ = resolveReferenceProbeZ(
-    probedPositions,
-    surface,
-    ensurePlainObject(options).referenceProbeZ
-  );
+  const normalized = ensurePlainObject(options).normalized === true;
+  // A normalized map is already surface Z. Do not subtract the origin or an
+  // explicit reference, or the probe height would be applied twice.
+  const referenceProbeZ = normalized
+    ? 0
+    : resolveReferenceProbeZ(
+      probedPositions,
+      surface,
+      ensurePlainObject(options).referenceProbeZ
+    );
 
-  log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points, reference Z ${referenceProbeZ.toFixed(3)}mm)...`);
+  log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points, ${normalized ? 'normalized surface' : `reference Z ${referenceProbeZ.toFixed(3)}mm`})...`);
 
   const lines = gcodeStr.split('\n');
   const results = [

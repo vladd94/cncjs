@@ -658,5 +658,9 @@
   "Probe new surface": "",
   "Set the probe area and capture a height map for this fixture.": "",
   "Apply compensation": "",
-  "Load a probe map and correct G-code before you cut.": ""
+  "Load a probe map and correct G-code before you cut.": "",
+  "Must be zero or greater": "",
+  "Legacy raw probe map. Z values still include the probe device, so autolevel subtracts the height at work X0 Y0.": "",
+  "Probe Height": "",
+  "Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0.": ""
 }

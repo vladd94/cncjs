@@ -57,6 +57,10 @@ module.exports = {
       allowArrowFunctions: true,
     }],
     'react/jsx-no-leaked-render': 0,
+    // Render callbacks (table cells, pagination, confirm modals) are invoked
+    // as functions. They are not mounted as <Component />, so a new function
+    // each render does not remount a subtree.
+    'react/no-unstable-nested-components': ['warn', { allowAsProps: true }],
     'react/static-property-placement': 0,
     'react/no-access-state-in-setstate': 0,
     'react/prefer-stateless-function': 0,

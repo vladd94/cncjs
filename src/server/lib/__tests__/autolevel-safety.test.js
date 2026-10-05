@@ -4,7 +4,11 @@ import {
   AUTOLEVEL_APPLIED_MARKER,
   AUTOLEVEL_REFERENCE_PREFIX,
 } from '../autolevel';
-import { parseProbeFile } from '../../../app/widgets/Autolevel/probeFile';
+import {
+  parseProbeFile,
+  readProbeSurfaceFile,
+  serializeProbeSurfaceFile,
+} from '../../../app/widgets/Autolevel/probeFile';
 
 const surface = [
   { x: 0, y: 0, z: 0 },
@@ -122,5 +126,34 @@ describe('probe file import', () => {
   });
   test.each(['', '1 2', '1 2 NaN', '1 2 Infinity', 'G0 X0 Y0'])('rejects unusable file %s', (text) => {
     expect(() => parseProbeFile(text)).toThrow();
+  });
+
+  test('round-trips a normalized map without subtracting probe height again', () => {
+    const points = [
+      { x: 0, y: 0, z: 0 },
+      { x: 70, y: 0, z: -0.099 },
+      { x: 140, y: 0, z: -0.152 },
+    ];
+    const text = serializeProbeSurfaceFile(points, { normalized: true, probeHeightMm: 1.653 });
+    const loaded = readProbeSurfaceFile(text);
+    const again = readProbeSurfaceFile(serializeProbeSurfaceFile(loaded.points, {
+      normalized: loaded.normalized,
+      probeHeightMm: loaded.probeHeightMm,
+    }));
+
+    expect(text.startsWith('; cncjs-probe-surface-normalized\n; probe-height=1.653000\n; z-values=surface-relative-to-work-zero\n')).toBe(true);
+    expect(loaded.normalized).toBe(true);
+    expect(loaded.probeHeightMm).toBeCloseTo(1.653, 6);
+    expect(loaded.points).toEqual(points);
+    expect(again.points).toEqual(points);
+  });
+
+  test('a file with no normalization marker stays a legacy raw map', () => {
+    const text = '0 0 1.653 0 0 0 0 0 0\n70 0 1.554 0 0 0 0 0 0\n140 0 1.501 0 0 0 0 0 0\n';
+    const loaded = readProbeSurfaceFile(text);
+
+    expect(loaded.normalized).toBe(false);
+    expect(loaded.probeHeightMm).toBe(null);
+    expect(loaded.points.map(point => point.z)).toEqual([1.653, 1.554, 1.501]);
   });
 });

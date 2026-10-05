@@ -664,7 +664,7 @@ describe('MarlinController', () => {
       ];
       controller.command('autolevel:applyProbeCompensation', { gcode: 'G0 X5 Y5 Z0', probeData }, callback);
       expect(callback).toHaveBeenCalledWith(null, {
-        compensatedGcode: '; cncjs-autolevel-applied\nG0 X5.000 Y5.000 Z0.000',
+        compensatedGcode: '; cncjs-autolevel-applied\n; cncjs-autolevel-reference-z=0.000000\nG0 X5.000 Y5.000 Z0.000',
       });
     });
 

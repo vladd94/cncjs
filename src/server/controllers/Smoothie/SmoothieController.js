@@ -737,6 +737,7 @@ class SmoothieController {
               const gridNode = this.probeState.probePoints[this.probeState.probedPositions.length];
               probedPos.x = isImperial ? in2mm(gridNode.x) : gridNode.x;
               probedPos.y = isImperial ? in2mm(gridNode.y) : gridNode.y;
+              probedPos.z = autolevel.surfaceZFromTrigger(probedPos.z, this.probeState.probeHeightMm);
 
               const newProbedPositions = [...this.probeState.probedPositions, probedPos];
               const isCompleted = newProbedPositions.length >= this.probeState.probePoints.length;
@@ -1726,6 +1727,11 @@ class SmoothieController {
               feedrate,
             },
           };
+          autolevel.assignProbeHeight(
+            this.probeState,
+            params.probeHeight,
+            this.runner.getModalGroup().units === 'G20'
+          );
 
           log.info(`[autolevel:start] Start probing with ${probePoints.length} points`);
 
@@ -1778,32 +1784,19 @@ class SmoothieController {
 
           try {
             const data = await fsp.readFile(filepath, 'utf8');
-            const lines = data.split('\n').filter(line => line.trim().length > 0);
+            const surface = autolevel.readProbeSurfaceText(data);
 
-            const probedPositions = [];
-            let minZ = Infinity;
-            let maxZ = -Infinity;
-
-            lines.forEach(line => {
-              const regex = /(-?\d*\.?\d+)?(\s+|$)/g;
-              const matches = [...line.matchAll(regex)];
-              const values = matches.map(match => (match[1] ? Number(match[1]) : undefined));
-              const [x, y, z] = values;
-
-              probedPositions.push({ x, y, z });
-              minZ = Math.min(z, minZ);
-              maxZ = Math.max(z, maxZ);
-            });
-
-            this.probeState.probedPositions = probedPositions;
-            this.probeState.minZ = minZ;
-            this.probeState.maxZ = maxZ;
+            this.probeState.probedPositions = surface.points;
+            this.probeState.minZ = surface.minZ;
+            this.probeState.maxZ = surface.maxZ;
+            this.probeState.normalized = surface.normalized;
+            this.probeState.probeHeightMm = surface.probeHeightMm;
 
             if (typeof callback === 'function') {
               callback(null, { success: true, state: this.probeState });
             }
 
-            log.info(`[autolevel:load] Loaded ${probedPositions.length} points from ${filepath}`);
+            log.info(`[autolevel:load] Loaded ${surface.points.length} points from ${filepath}`);
           } catch (err) {
             log.error('[autolevel:load] Error loading probe data:', err);
             if (typeof callback === 'function') {
@@ -1815,12 +1808,11 @@ class SmoothieController {
           const [filepath, callback] = args;
 
           try {
-            const { probedPositions } = this.probeState;
-            const data = probedPositions.map(({ x, y, z }) => {
-              const a = 0, b = 0, c = 0;
-              const u = 0, v = 0, w = 0;
-              return `${x} ${y} ${z} ${a} ${b} ${c} ${u} ${v} ${w}`;
-            }).join('\n');
+            const { probedPositions, normalized, probeHeightMm } = this.probeState;
+            const data = autolevel.serializeProbeSurfaceFile(probedPositions, {
+              normalized: normalized === true,
+              probeHeightMm,
+            });
 
             await fsp.writeFile(filepath, data, 'utf8');
 
@@ -1844,7 +1836,9 @@ class SmoothieController {
           } = params;
 
           try {
-            const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData);
+            const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData, {
+              normalized: params.normalized === true,
+            });
             if (typeof callback === 'function') {
               callback(null, { compensatedGcode });
             }

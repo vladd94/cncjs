@@ -888,7 +888,7 @@ describe('TinyGController', () => {
       controller.command('autolevel:applyProbeCompensation', { gcode: 'M5\nG90', probeData }, callback);
 
       expect(callback).toHaveBeenCalledWith(null, {
-        compensatedGcode: '; cncjs-autolevel-applied\nM5\nG90',
+        compensatedGcode: '; cncjs-autolevel-applied\n; cncjs-autolevel-reference-z=0.000000\nM5\nG90',
       });
     });
   });

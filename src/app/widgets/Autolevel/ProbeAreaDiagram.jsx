@@ -58,9 +58,9 @@ const ProbeAreaDiagram = ({
       />
 
       {/* Grid dots */}
-      {dots.map((dot, idx) => (
+      {dots.map((dot) => (
         <circle
-          key={idx}
+          key={`${dot.x},${dot.y}`}
           cx={dot.x}
           cy={dot.y}
           r={dotRadius}

@@ -779,6 +779,102 @@ describe('GrblController', () => {
       expect(controller.probeState.maxZ).toBe(-1);
     });
 
+    test('probe height is subtracted from each trigger before the point is stored', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', {
+        startX: 0,
+        endX: 10,
+        stepX: 10,
+        startY: 0,
+        endY: 0,
+        stepY: 10,
+        clearanceZ: 5,
+        startZ: 1,
+        endZ: -1,
+        feedrate: 100,
+        probeHeight: 1.653,
+      });
+      flushFeeder(controller);
+
+      expect(controller.probeState.normalized).toBe(true);
+      expect(controller.probeState.probeHeightMm).toBeCloseTo(1.653, 6);
+
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+      const emit = (z) => {
+        controller.runner.emit('parameters', {
+          raw: `[PRB:0.000,0.000,${z}:1]`,
+          name: 'PRB',
+          value: { result: 1, x: '0.000', y: '0.000', z: String(z) },
+        });
+      };
+
+      emit(1.760);
+      emit(1.500);
+
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0.107, 6);
+      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(-0.153, 6);
+    });
+
+    test('a trigger equal to the probe height is stored as surface zero', () => {
+      const { controller } = setup();
+      controller.probeState.probePoints = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
+      controller.probeState.probeHeightMm = 5;
+      controller.probeState.normalized = true;
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+
+      controller.runner.emit('parameters', {
+        raw: '[PRB:0.000,0.000,5.000:1]',
+        name: 'PRB',
+        value: { result: 1, x: '0.000', y: '0.000', z: '5.000' },
+      });
+      controller.runner.emit('parameters', {
+        raw: '[PRB:10.000,0.000,5.125:1]',
+        name: 'PRB',
+        value: { result: 1, x: '10.000', y: '0.000', z: '5.125' },
+      });
+
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(0.125, 6);
+    });
+
+    test('an inch probe height is converted to millimetres before it is subtracted', () => {
+      const { controller } = setup();
+      setUnitsG20(controller);
+      controller.command('autolevel:start', {
+        startX: 0,
+        endX: 0,
+        stepX: 1,
+        startY: 0,
+        endY: 0,
+        stepY: 1,
+        clearanceZ: 1,
+        startZ: 0.1,
+        endZ: -0.1,
+        feedrate: 10,
+        probeHeight: 5,
+      });
+      flushFeeder(controller);
+
+      expect(controller.probeState.probeHeightMm).toBeCloseTo(127, 6);
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+      controller.runner.emit('parameters', {
+        raw: '[PRB:0.000,0.000,130.175:1]',
+        name: 'PRB',
+        value: { result: 1, x: '0.000', y: '0.000', z: '130.175' },
+      });
+
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(3.175, 3);
+    });
+
     test('autolevel:stop resets the controller and clears the probe state', () => {
       const { controller, writes } = setup();
 
@@ -881,7 +977,7 @@ describe('GrblController', () => {
       }, callback);
 
       expect(callback).toHaveBeenCalledWith(null, {
-        compensatedGcode: '; cncjs-autolevel-applied\nG1 F100 X0.000 Y0.000 Z0.000',
+        compensatedGcode: '; cncjs-autolevel-applied\n; cncjs-autolevel-reference-z=0.000000\nG1 F100 X0.000 Y0.000 Z0.000',
       });
     });
 

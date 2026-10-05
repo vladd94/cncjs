@@ -15,7 +15,7 @@ import styles from './SetupProbeView.styl';
 const SetupProbeView = ({ state, actions }) => {
   const {
     stepX, stepY, startX, startY, endX, endY,
-    clearanceZ, startZ, endZ, feedrate,
+    clearanceZ, startZ, endZ, feedrate, probeHeight,
     probeState, probeProgress, canClick, units,
     validationErrors = {},
   } = state;
@@ -50,6 +50,33 @@ const SetupProbeView = ({ state, actions }) => {
       <div className={styles.section}>
         <div className={styles.sectionTitle}>{i18n._('Z-Axis Settings')}</div>
         <div className="form-group">
+          <label className="control-label">
+            {i18n._('Probe Height')}
+            {' '}
+            <Infotip
+              placement="top"
+              content={i18n._('Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0.')}
+            >
+              <i className="fa fa-info-circle text-muted" />
+            </Infotip>
+          </label>
+          <div className="input-group input-group-sm">
+            <input
+              type="number"
+              className="form-control"
+              value={probeHeight}
+              min={0}
+              step={step}
+              onChange={actions.handleProbeHeightChange}
+              disabled={isProbing}
+            />
+            <div className="input-group-addon">{toDisplayUnits(units)}</div>
+          </div>
+          {validationErrors.probeHeight && (
+            <small style={{ color: '#a94442' }}>{validationErrors.probeHeight}</small>
+          )}
+        </div>
+        <div className="form-group">
           <Button
             btnStyle="flat"
             onClick={actions.showTestProbeConfirmation}
@@ -81,7 +108,10 @@ const SetupProbeView = ({ state, actions }) => {
                 </Infotip>
               </label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" value={startZ} step={step} onChange={actions.handleStartZChange} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" value={startZ}
+                  step={step} onChange={actions.handleStartZChange} disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.startZ && (
@@ -101,7 +131,10 @@ const SetupProbeView = ({ state, actions }) => {
                 </Infotip>
               </label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" value={endZ} step={step} onChange={actions.handleEndZChange} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" value={endZ}
+                  step={step} onChange={actions.handleEndZChange} disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.endZ && (
@@ -124,7 +157,11 @@ const SetupProbeView = ({ state, actions }) => {
                 </Infotip>
               </label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" value={feedrate} min={1} step={1} onChange={actions.handleProbeFeedrateChange} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" value={feedrate}
+                  min={1} step={1} onChange={actions.handleProbeFeedrateChange}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{feedrateUnits}</div>
               </div>
               {validationErrors.feedrate && (
@@ -145,7 +182,11 @@ const SetupProbeView = ({ state, actions }) => {
                 </Infotip>
               </label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" value={clearanceZ} min={0} step={step} onChange={actions.handleClearanceZChange} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" value={clearanceZ}
+                  min={0} step={step} onChange={actions.handleClearanceZChange}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.clearanceZ && (
@@ -174,7 +215,12 @@ const SetupProbeView = ({ state, actions }) => {
             <div className="form-group">
               <label className="control-label">{i18n._('Start X')}</label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" name="startX" value={startX} step={step} min={-1000} onChange={actions.handleStartXChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" name="startX"
+                  value={startX} step={step} min={-1000}
+                  onChange={actions.handleStartXChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.startX && (
@@ -186,7 +232,12 @@ const SetupProbeView = ({ state, actions }) => {
             <div className="form-group">
               <label className="control-label">{i18n._('Start Y')}</label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" name="startY" value={startY} step={step} min={-1000} onChange={actions.handleStartYChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" name="startY"
+                  value={startY} step={step} min={-1000}
+                  onChange={actions.handleStartYChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.startY && (
@@ -200,7 +251,12 @@ const SetupProbeView = ({ state, actions }) => {
             <div className="form-group">
               <label className="control-label">{i18n._('End X')}</label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" name="endX" value={endX} step={step} min={-1000} onChange={actions.handleEndXChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" name="endX"
+                  value={endX} step={step} min={-1000}
+                  onChange={actions.handleEndXChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.endX && (
@@ -212,7 +268,12 @@ const SetupProbeView = ({ state, actions }) => {
             <div className="form-group">
               <label className="control-label">{i18n._('End Y')}</label>
               <div className="input-group input-group-sm">
-                <input type="number" className="form-control" name="endY" value={endY} step={step} min={-1000} onChange={actions.handleEndYChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur} disabled={isProbing} />
+                <input
+                  type="number" className="form-control" name="endY"
+                  value={endY} step={step} min={-1000}
+                  onChange={actions.handleEndYChange} onFocus={actions.handleInputFocus} onBlur={actions.handleProbeAreaBlur}
+                  disabled={isProbing}
+                />
                 <div className="input-group-addon">{toDisplayUnits(units)}</div>
               </div>
               {validationErrors.endY && (
