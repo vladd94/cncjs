@@ -2,6 +2,7 @@
 import {
   applyProbeCompensation,
   AUTOLEVEL_APPLIED_MARKER,
+  AUTOLEVEL_REFERENCE_PREFIX,
 } from '../autolevel';
 import { parseProbeFile } from '../../../app/widgets/Autolevel/probeFile';
 
@@ -14,9 +15,10 @@ const surface = [
 
 const body = (gcode) => {
   const result = applyProbeCompensation(gcode, surface);
-  const prefix = `; ${AUTOLEVEL_APPLIED_MARKER}\n`;
-  expect(result.startsWith(prefix)).toBe(true);
-  return result.slice(prefix.length);
+  const lines = result.split('\n');
+  expect(lines[0]).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}`);
+  expect(lines[1].startsWith(`; ${AUTOLEVEL_REFERENCE_PREFIX}`)).toBe(true);
+  return lines.slice(2).join('\n');
 };
 
 describe('autolevel safety regressions', () => {
@@ -74,7 +76,7 @@ describe('autolevel safety regressions', () => {
   test('accepts negative-coordinate maps and retains the sign', () => {
     const map = surface.map(p => ({ ...p, y: p.y - 10 }));
     const result = applyProbeCompensation('G0 X10 Y-5 Z0', map);
-    expect(result).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}\nG0 X10.000 Y-5.000 Z1.000`);
+    expect(result).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}\n; ${AUTOLEVEL_REFERENCE_PREFIX}0.000000\nG0 X10.000 Y-5.000 Z1.000`);
   });
 
   test('rejects G4 mixed with XYZ instead of desyncing pose tracking', () => {
@@ -102,7 +104,7 @@ describe('autolevel safety regressions', () => {
       { x: 0, y: 10, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 20, y: 10, z: 1 },
     ];
     const result = applyProbeCompensation('G0 X50 Y0 Z0', map);
-    expect(result).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}\nG0 X50.000 Y0.000 Z1.000`);
+    expect(result).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}\n; ${AUTOLEVEL_REFERENCE_PREFIX}0.000000\nG0 X50.000 Y0.000 Z1.000`);
   });
 
   test('refuses to apply compensation twice', () => {

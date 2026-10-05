@@ -34,6 +34,10 @@ const DEFAULT_GRID_STEP = 5;
 // Written as the first line of compensated output; refuse to apply again if present.
 export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 
+// Second header line. The value is the probe reading (mm) at the work origin,
+// which is the height that was absorbed when work Z was zeroed.
+export const AUTOLEVEL_REFERENCE_PREFIX = 'cncjs-autolevel-reference-z=';
+
 // Max sagitta of a linearized arc, in mm. Linear moves still follow the probe
 // grid; this only controls G2/G3 so small holes are not collapsed into chords.
 export const ARC_CHORD_ERROR_MM = 0.02;
@@ -434,29 +438,84 @@ const buildSurface = (probedPositions) => {
  * Calculate Z compensation for a point. Uses bilinear interpolation over the
  * probe grid, falling back to a 3-point plane fit for non-grid data or grid
  * cells with missing nodes.
+ *
+ * Probe Z is the work-coordinate trigger height, which includes the probe
+ * device. Only the difference from the work-origin reading is a surface error:
+ * correctedZ = commandedZ + probeAtXY - referenceProbeZ.
+ *
  * @param {Point3} pt - Point in current units
  * @param {object} surface - Probe surface from buildSurface
  * @param {string} units - Current units (METRIC_UNITS or IMPERIAL_UNITS)
+ * @param {number} referenceProbeZ - Probe height at the work origin, in mm
  * @returns {Point3} Compensated point in current units
  */
-const compensatePoint = (pt, surface, units = METRIC_UNITS) => {
+const compensatePoint = (pt, surface, units = METRIC_UNITS, referenceProbeZ = 0) => {
   // Probed positions are in mm; convert the query point to match.
   const x = units === IMPERIAL_UNITS ? in2mm(pt.x) : pt.x;
   const y = units === IMPERIAL_UNITS ? in2mm(pt.y) : pt.y;
   const z = units === IMPERIAL_UNITS ? in2mm(pt.z) : pt.z;
 
-  const dz = surface.zAt(x, y);
-  if (dz === null) {
+  const probeZ = surface.zAt(x, y);
+  if (probeZ === null) {
     log.warn('Cannot compute Z compensation for point');
     return pt;
   }
 
-  const compensatedZ = z + dz;
+  const compensatedZ = z + (probeZ - referenceProbeZ);
   return {
     x: pt.x,
     y: pt.y,
     z: units === IMPERIAL_UNITS ? mm2in(compensatedZ) : compensatedZ,
   };
+};
+
+/**
+ * Probe height (mm) that work Z zero already accounts for.
+ * The map stores absolute trigger heights. Z zero is one work-offset, so the
+ * matching reading is the probe height at X0 Y0 — when that point lies inside
+ * the measured area. An explicit referenceProbeZ overrides that lookup.
+ * @param {Point3[]} probedPositions
+ * @param {{ zAt: (x: number, y: number) => (number|null) }} surface
+ * @param {number|undefined} referenceProbeZ
+ * @returns {number}
+ */
+const resolveReferenceProbeZ = (probedPositions, surface, referenceProbeZ) => {
+  if (referenceProbeZ !== undefined && referenceProbeZ !== null) {
+    if (!Number.isFinite(referenceProbeZ)) {
+      throw new Error('referenceProbeZ must be a finite number');
+    }
+    return referenceProbeZ;
+  }
+
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const point of probedPositions) {
+    if (point.x < minX) {
+      minX = point.x;
+    }
+    if (point.x > maxX) {
+      maxX = point.x;
+    }
+    if (point.y < minY) {
+      minY = point.y;
+    }
+    if (point.y > maxY) {
+      maxY = point.y;
+    }
+  }
+
+  // Inclusive: a probe on the work-origin corner is inside the map.
+  if (minX <= 0 && maxX >= 0 && minY <= 0 && maxY >= 0) {
+    const originZ = surface.zAt(0, 0);
+    if (!Number.isFinite(originZ)) {
+      throw new Error('Cannot determine the probe height at the work origin');
+    }
+    return originZ;
+  }
+
+  throw new Error('Probe map does not cover the work origin (X0 Y0), so the Z-zero reference height is unknown');
 };
 
 /**
@@ -498,9 +557,11 @@ export const createProbeXYPoints = (options) => {
  *
  * @param {string} gcodeStr - G-code string to compensate
  * @param {array} probeData - Array of probe data [{x, y, z, a, b, c, u, v, w}, ...] or [{x, y, z}, ...]
+ * @param {{ referenceProbeZ?: number }} [options] - Optional probe height (mm) at work Z zero.
+ *   When omitted, the probe height interpolated at X0 Y0 is used.
  * @returns {string} Compensated G-code string
  */
-export const applyProbeCompensation = (gcodeStr, probeData = []) => {
+export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) => {
   if (typeof gcodeStr === 'string' && gcodeStr.includes(AUTOLEVEL_APPLIED_MARKER)) {
     throw new Error('G-code is already autolevel-compensated; refusing to apply again');
   }
@@ -528,11 +589,19 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
 
   const surface = buildSurface(probedPositions);
   const { stepX, stepY } = surface;
+  const referenceProbeZ = resolveReferenceProbeZ(
+    probedPositions,
+    surface,
+    ensurePlainObject(options).referenceProbeZ
+  );
 
-  log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points)...`);
+  log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points, reference Z ${referenceProbeZ.toFixed(3)}mm)...`);
 
   const lines = gcodeStr.split('\n');
-  const results = [`; ${AUTOLEVEL_APPLIED_MARKER}`];
+  const results = [
+    `; ${AUTOLEVEL_APPLIED_MARKER}`,
+    `; ${AUTOLEVEL_REFERENCE_PREFIX}${referenceProbeZ.toFixed(6)}`,
+  ];
 
   let p0 = { x: 0, y: 0, z: 0 };
   let p0Initialized = false;
@@ -710,7 +779,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       }
       for (let i = 1; i < segments.length; i++) {
         const seg = segments[i];
-        const cpt = compensatePoint(seg, surface, units);
+        const cpt = compensatePoint(seg, surface, units, referenceProbeZ);
         const prefix = i === 1 ? firstPrefix : restPrefix;
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
         pushLine(newLine.trim());
@@ -721,7 +790,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = []) => {
       if (isArc) {
         throw new Error(`Arc on line ${lineIndex + 1} needs a prior absolute XYZ position`);
       }
-      const cpt = compensatePoint(pt, surface, units);
+      const cpt = compensatePoint(pt, surface, units, referenceProbeZ);
       const newLine = `${lineWithoutGeom} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
       results.push(newLine.trim());
       p0Initialized = true;

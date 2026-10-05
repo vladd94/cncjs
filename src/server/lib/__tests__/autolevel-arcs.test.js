@@ -3,6 +3,7 @@ import {
   applyProbeCompensation,
   ARC_CHORD_ERROR_MM,
   AUTOLEVEL_APPLIED_MARKER,
+  AUTOLEVEL_REFERENCE_PREFIX,
 } from '../autolevel';
 
 const flat = [
@@ -20,11 +21,12 @@ const tilt = [
   { x: 10, y: 10, z: 1 },
 ];
 
-const body = (gcode, probeData = flat) => {
-  const result = applyProbeCompensation(gcode, probeData);
-  const prefix = `; ${AUTOLEVEL_APPLIED_MARKER}\n`;
-  expect(result.startsWith(prefix)).toBe(true);
-  return result.slice(prefix.length);
+const body = (gcode, probeData = flat, options) => {
+  const result = applyProbeCompensation(gcode, probeData, options);
+  const lines = result.split('\n');
+  expect(lines[0]).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}`);
+  expect(lines[1].startsWith(`; ${AUTOLEVEL_REFERENCE_PREFIX}`)).toBe(true);
+  return lines.slice(2).join('\n');
 };
 
 const xyz = (line) => {
@@ -141,6 +143,30 @@ describe('autolevel arc tessellation', () => {
     expect(modalPoints.length).toBeGreaterThan(8);
     expect(modalPoints[modalPoints.length - 1].x).toBeCloseTo(10, 3);
     expect(modalPoints[modalPoints.length - 1].y).toBeCloseTo(0, 3);
+  });
+
+  test('tessellated arcs use the surface delta, not the raw probe height', () => {
+    const reference = 1.653;
+    const raised = tilt.map(point => ({ ...point, z: point.z + reference }));
+    const points = g1Points(body('G17\nG0 X10 Y0 Z-0.300\nG3 X0 Y0 I-5 J0', raised));
+    const crown = points.reduce((best, point) => (point.y > best.y ? point : best), points[0]);
+
+    // Commanded Z is -0.300. At X≈5 the surface is reference+0.5, so delta is +0.5.
+    expect(crown.z).toBeCloseTo(0.2, 1);
+    expect(crown.z).toBeLessThan(1);
+    points.forEach((point) => {
+      expect(point.z).toBeGreaterThan(-0.35);
+      expect(point.z).toBeLessThan(0.8);
+    });
+  });
+
+  test('a flat probe offset leaves every arc segment at the programmed Z', () => {
+    const plate = flat.map(point => ({ ...point, z: 2 }));
+    const points = g1Points(body('G17\nG0 X10 Y0 Z-0.300\nG3 X0 Y0 I-5 J0', plate));
+
+    points.forEach((point) => {
+      expect(point.z).toBeCloseTo(-0.3, 3);
+    });
   });
 
   test('a huge radius is capped instead of allocating millions of chords', () => {

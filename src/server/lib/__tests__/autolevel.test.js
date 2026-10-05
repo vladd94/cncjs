@@ -3,14 +3,16 @@ import {
   createProbeXYPoints,
   applyProbeCompensation as applyProbeCompensationRaw,
   AUTOLEVEL_APPLIED_MARKER,
+  AUTOLEVEL_REFERENCE_PREFIX,
 } from '../autolevel';
 
-// Strip the anti-double-apply marker so existing path expectations stay focused.
-const applyProbeCompensation = (gcode, probeData) => {
-  const result = applyProbeCompensationRaw(gcode, probeData);
-  const prefix = `; ${AUTOLEVEL_APPLIED_MARKER}\n`;
-  expect(result.startsWith(prefix)).toBe(true);
-  return result.slice(prefix.length);
+// Strip the anti-double-apply marker and the traced reference height.
+const applyProbeCompensation = (gcode, probeData, options) => {
+  const result = applyProbeCompensationRaw(gcode, probeData, options);
+  const lines = result.split('\n');
+  expect(lines[0]).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}`);
+  expect(lines[1].startsWith(`; ${AUTOLEVEL_REFERENCE_PREFIX}`)).toBe(true);
+  return lines.slice(2).join('\n');
 };
 
 describe('autolevel', () => {
@@ -145,25 +147,25 @@ describe('autolevel', () => {
         expect(result).toEqual(expectedResult);
       });
 
-      test('should apply negative compensation for sunken surface', () => {
-        const gcode = 'G0 X5 Y5 Z0';
+      test('should apply negative compensation for a local low spot', () => {
+        const gcode = 'G0 X10 Y0 Z0';
         const probeData = [
-          { x: 0, y: 0, z: -0.5 },
+          { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: -0.5 },
-          { x: 0, y: 10, z: -0.5 },
+          { x: 0, y: 10, z: 0 },
           { x: 10, y: 10, z: -0.5 },
         ];
 
         const result = applyProbeCompensation(gcode, probeData);
 
-        // At (5,5), surface is at Z=-0.5, commanded Z=0 → compensated Z=-0.5
-        const expectedResult = 'G0 X5.000 Y5.000 Z-0.500';
+        // Origin probe is 0. The X10 node is 0.5 mm lower, so commanded Z=0 → -0.5
+        const expectedResult = 'G0 X10.000 Y0.000 Z-0.500';
         expect(result).toEqual(expectedResult);
       });
 
-      test('should add probe deviation to commanded Z height', () => {
+      test('should leave Z unchanged when every probe reading is the same constant', () => {
         const gcode = 'G0 X0 Y0 Z10';
-        // Horizontal plane at Z=2
+        // Horizontal plane at the probe-device height, not a 2 mm surface error.
         const probeData = [
           { x: 0, y: 0, z: 2 },
           { x: 10, y: 0, z: 2 },
@@ -173,8 +175,7 @@ describe('autolevel', () => {
 
         const result = applyProbeCompensation(gcode, probeData);
 
-        // At (0,0), surface Z=2, commanded Z=10 → compensated Z=12
-        const expectedResult = 'G0 X0.000 Y0.000 Z12.000';
+        const expectedResult = 'G0 X0.000 Y0.000 Z10.000';
         expect(result).toEqual(expectedResult);
       });
     });
@@ -266,7 +267,7 @@ describe('autolevel', () => {
 
         // Feedrate and spindle speed should be preserved
         expect(result).toEqual([
-          'G1 F1000 S5000 X0.000 Y0.000 Z12.000',
+          'G1 F1000 S5000 X0.000 Y0.000 Z10.000',
         ].join('\n'));
       });
     });
@@ -428,6 +429,73 @@ describe('autolevel', () => {
         const degraded = applyProbeCompensation(gcode, quantisedGrid);
         const degradedZ = Number(/Z(-?[\d.]+)/.exec(degraded)[1]);
         expect(Math.abs(degradedZ)).toBeLessThan(0.05);
+      });
+    });
+
+    describe('reference probe height', () => {
+      // X rises by 0.21436 over 10 mm, so the midpoint is reference + 0.10718.
+      const reference = 1.653;
+      const surfaceDelta = 0.10718;
+      const probeData = [
+        { x: 0, y: 0, z: reference },
+        { x: 10, y: 0, z: reference + (2 * surfaceDelta) },
+        { x: 0, y: 10, z: reference },
+        { x: 10, y: 10, z: reference + (2 * surfaceDelta) },
+      ];
+      const zOf = (gcode, options) => {
+        const line = applyProbeCompensation(gcode, probeData, options);
+        return Number(/Z(-?\d+\.\d+)/.exec(line)[1]);
+      };
+
+      test('subtracts the work-origin probe height instead of adding the raw reading', () => {
+        // interpolated probe at X5 is 1.76018; raw addition would produce Z1.460
+        expect(zOf('G0 X5 Y0 Z-0.300')).toBeCloseTo(-0.193, 3);
+        // raw addition would produce Z-1.440
+        expect(zOf('G1 X5 Y0 Z-3.200')).toBeCloseTo(-3.093, 3);
+      });
+
+      test('keeps a flat probe map of any constant from shifting programmed Z', () => {
+        const flat = [
+          { x: 0, y: 0, z: 1.653 },
+          { x: 10, y: 0, z: 1.653 },
+          { x: 0, y: 10, z: 1.653 },
+          { x: 10, y: 10, z: 1.653 },
+        ];
+        const anotherFlat = flat.map(point => ({ ...point, z: 2 }));
+
+        expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', flat)).toBe('G1 X5.000 Y5.000 Z-3.200');
+        expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', anotherFlat)).toBe('G1 X5.000 Y5.000 Z-3.200');
+      });
+
+      test('lowers Z by the amount the local probe sits below the reference', () => {
+        const low = [
+          { x: 0, y: 0, z: 1.653 },
+          { x: 10, y: 0, z: 1.500 },
+          { x: 0, y: 10, z: 1.653 },
+          { x: 10, y: 10, z: 1.500 },
+        ];
+
+        expect(applyProbeCompensation('G1 X10 Y0 Z-3.200', low)).toBe('G1 X10.000 Y0.000 Z-3.353');
+      });
+
+      test('shifts a tab and the contour by the same local delta', () => {
+        const result = applyProbeCompensation([
+          'G0 X5 Y0 Z-3.200',
+          'G1 X5 Y0 Z-2.450',
+        ].join('\n'), probeData);
+        const zs = result.split('\n').map(line => Number(/Z(-?\d+\.\d+)/.exec(line)[1]));
+
+        expect(zs[0]).toBeCloseTo(-3.093, 3);
+        expect(zs[1] - zs[0]).toBeCloseTo(0.75, 3);
+        expect(zs[0]).not.toBeCloseTo(-1.44, 2);
+      });
+
+      test('refuses to invent a reference when the map misses the work origin', () => {
+        const offset = probeData.map(point => ({ ...point, x: point.x + 20, y: point.y + 20 }));
+
+        expect(() => applyProbeCompensation('G1 X25 Y25 Z-3.200', offset)).toThrow(/work origin/);
+        expect(applyProbeCompensation('G1 X25 Y25 Z-0.300', offset, { referenceProbeZ: reference }))
+          .toMatch(/Z-0\.193/);
       });
     });
   });

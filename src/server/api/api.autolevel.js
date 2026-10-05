@@ -5,7 +5,7 @@ import {
 
 // Apply probe compensation without requiring an open serial port.
 export const apply = (req, res) => {
-  const { gcode = '', probeData = [] } = { ...req.body };
+  const { gcode = '', probeData = [], referenceProbeZ } = { ...req.body };
 
   if (!gcode) {
     res.status(ERR_BAD_REQUEST).send({
@@ -15,7 +15,8 @@ export const apply = (req, res) => {
   }
 
   try {
-    const compensatedGcode = applyProbeCompensation(gcode, probeData);
+    const options = referenceProbeZ === undefined ? {} : { referenceProbeZ };
+    const compensatedGcode = applyProbeCompensation(gcode, probeData, options);
     res.send({ compensatedGcode });
   } catch (err) {
     res.status(ERR_BAD_REQUEST).send({
