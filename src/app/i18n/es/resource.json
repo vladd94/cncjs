@@ -667,5 +667,10 @@
   "Exit CNCjs and return to the desktop?": "",
   "A CNC job is currently running. Closing the display will not stop the job.": "",
   "Returning to desktop...": "",
-  "Could not exit kiosk mode.": ""
+  "Could not exit kiosk mode.": "",
+  "Fine Probe Feed": "",
+  "Slow feed for the second, precision touch. Only this touch is saved.": "",
+  "Probe Retract": "",
+  "Lift after the first touch, before the precision probe.": "",
+  "Retract is too large for the probe travel": ""
 }

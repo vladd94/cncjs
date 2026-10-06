@@ -325,6 +325,12 @@ class AutolevelWidget extends PureComponent {
     handleProbeFeedrateChange: (event) => {
       this.setState({ feedrate: this.parseInputValue(event.target.value) });
     },
+    handleFineFeedrateChange: (event) => {
+      this.setState({ fineFeedrate: this.parseInputValue(event.target.value) });
+    },
+    handleProbeRetractChange: (event) => {
+      this.setState({ probeRetract: this.parseInputValue(event.target.value) });
+    },
     handleProbeHeightChange: (event) => {
       this.setState({ probeHeight: this.parseInputValue(event.target.value) });
     },
@@ -357,7 +363,7 @@ class AutolevelWidget extends PureComponent {
         startX, endX, stepX,
         startY, endY, stepY,
         clearanceZ, startZ, endZ,
-        feedrate, probeHeight, units,
+        feedrate, fineFeedrate, probeRetract, probeHeight, units,
       } = this.state;
       // Calculate total points
       const numPointsX = Math.floor((endX - startX) / stepX) + 1;
@@ -397,6 +403,8 @@ class AutolevelWidget extends PureComponent {
         startZ,
         endZ,
         feedrate,
+        fineFeedrate,
+        probeRetract,
         probeHeight,
       });
 
@@ -618,6 +626,8 @@ class AutolevelWidget extends PureComponent {
         startZ: mapValueToUnits(this.config.get('startZ', 5), units),
         endZ: mapValueToUnits(this.config.get('endZ', -5), units),
         feedrate: mapValueToUnits(this.config.get('feedrate', 5), units),
+        fineFeedrate: mapValueToUnits(this.config.get('fineFeedrate', 10), units),
+        probeRetract: mapValueToUnits(this.config.get('probeRetract', 1), units),
         probeHeight: mapValueToUnits(this.config.get('probeHeight', 0), units),
       });
     },
@@ -772,7 +782,7 @@ class AutolevelWidget extends PureComponent {
       stepX, stepY,
       startX, startY, endX, endY,
       clearanceZ, startZ, endZ,
-      feedrate, probeHeight,
+      feedrate, fineFeedrate, probeRetract, probeHeight,
     } = this.state;
 
     this.config.set('minimized', minimized);
@@ -795,6 +805,8 @@ class AutolevelWidget extends PureComponent {
     this.config.set('startZ', toMetric(startZ));
     this.config.set('endZ', toMetric(endZ));
     this.config.set('feedrate', toMetric(feedrate));
+    this.config.set('fineFeedrate', toMetric(fineFeedrate));
+    this.config.set('probeRetract', toMetric(probeRetract));
     this.config.set('probeHeight', toMetric(probeHeight));
 
     // Keep the 3D visualizer in sync whenever the probe configuration changes
@@ -854,6 +866,8 @@ class AutolevelWidget extends PureComponent {
       startZ: this.config.get('startZ', 5),
       endZ: this.config.get('endZ', -5),
       feedrate: this.config.get('feedrate', 25),
+      fineFeedrate: this.config.get('fineFeedrate', 10),
+      probeRetract: this.config.get('probeRetract', 1),
       probeHeight: this.config.get('probeHeight', 0),
       probeMapNormalized: false,
       probeMapLegacy: false,
@@ -945,7 +959,7 @@ class AutolevelWidget extends PureComponent {
       startX, startY, endX, endY,
       stepX, stepY,
       clearanceZ, startZ, endZ,
-      feedrate, probeHeight,
+      feedrate, fineFeedrate, probeRetract, probeHeight,
     } = this.state;
     const errors = {};
     const invalidMsg = i18n._('Must be a number');
@@ -996,6 +1010,22 @@ class AutolevelWidget extends PureComponent {
       errors.feedrate = invalidMsg;
     } else if (feedrate <= 0) {
       errors.feedrate = positiveMsg;
+    }
+    if (!this.isValidNumber(fineFeedrate)) {
+      errors.fineFeedrate = invalidMsg;
+    } else if (fineFeedrate <= 0) {
+      errors.fineFeedrate = positiveMsg;
+    }
+    if (!this.isValidNumber(probeRetract)) {
+      errors.probeRetract = invalidMsg;
+    } else if (probeRetract <= 0) {
+      errors.probeRetract = positiveMsg;
+    } else if (
+      this.isValidNumber(startZ) &&
+      this.isValidNumber(endZ) &&
+      (probeRetract * 1.5) >= (startZ - endZ)
+    ) {
+      errors.probeRetract = i18n._('Retract is too large for the probe travel');
     }
     if (!this.isValidNumber(probeHeight)) {
       errors.probeHeight = invalidMsg;

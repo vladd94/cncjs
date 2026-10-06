@@ -47,7 +47,7 @@ import {
 } from '../constants';
 import * as builtinCommand from '../utils/builtin-command';
 import { isM0, isM1, isM6, replaceM6 } from '../utils/gcode';
-import { in2mm, mapPositionToUnits, mapValueToUnits } from '../utils/units';
+import { in2mm, mm2in, mapPositionToUnits, mapValueToUnits } from '../utils/units';
 import GrblRunner from './GrblRunner';
 import {
   GRBL,
@@ -61,6 +61,9 @@ import {
 
 const log = logger('controller:Grbl');
 const noop = _.noop;
+// Controller-only marker. The feeder holds here and checks the probe pin
+// after the retract has finished, before the fine G38.2 is sent.
+const PROBE_RELEASE_CHECK = '%probe-release';
 
 class GrblController {
     type = GRBL;
@@ -157,6 +160,21 @@ class GrblController {
 
       // The probe configuration
       config: null,
+
+      // 'coarse' or 'fine' while Probe Surface is running. Only fine is stored.
+      probePhase: null,
+
+      // True between the retract and the fine probe, while a fresh status
+      // report is checked for a released probe pin.
+      awaitingProbeRelease: false,
+
+      // One Idle report can still be a sample from the coarse contact.
+      // A second closed reading means the retract did not release the pin.
+      probeReleaseClosedOnce: false,
+
+      // G91 was sent and G90 has not been acknowledged yet. Restored on the
+      // next Idle after an alarm, or by reset, never by motion during Alarm.
+      distanceModeRestorePending: false,
     };
 
     // Feeder
@@ -241,6 +259,13 @@ class GrblController {
           context = this.populateContext(context);
 
           if (line[0] === '%') {
+            if (line === PROBE_RELEASE_CHECK) {
+              this.probeState.awaitingProbeRelease = true;
+              this.feeder.hold({ data: 'probe-release' });
+              this.write('?');
+              return '';
+            }
+
             const [command, commandArgs] = ensureArray(builtinCommand.match(line));
 
             // %msg
@@ -353,6 +378,16 @@ class GrblController {
         line = String(line).trim();
         if (line.length === 0) {
           return;
+        }
+
+        if (this.probeState.probePhase) {
+          if (line === 'G91') {
+            this.probeState.distanceModeRestorePending = true;
+            this.markDistance('G91');
+          } else if (line === 'G90') {
+            this.probeState.distanceModeRestorePending = false;
+            this.markDistance('G90');
+          }
         }
 
         this.emit('serialport:write', line + '\n', {
@@ -564,6 +599,8 @@ class GrblController {
 
         this.actionTime.statusReportSequence += 1;
         this.actionMask.queryStatusReport = false;
+        this.considerProbeRelease();
+        this.restoreDistanceModeIfIdle();
 
         if (this.actionMask.replyStatusReport) {
           this.actionMask.replyStatusReport = false;
@@ -701,6 +738,14 @@ class GrblController {
           // Grbl v0.9
           this.emit('serialport:read', res.raw);
         }
+
+        const probePhase = this.probeState.probePhase;
+        const probeActive = probePhase === autolevel.PROBE_PHASE_COARSE ||
+          probePhase === autolevel.PROBE_PHASE_FINE ||
+          this.probeState.awaitingProbeRelease;
+        if (probeActive) {
+          this.abortSurfaceProbe('[autolevel] Probe alarm; the point was not saved');
+        }
       });
 
       this.runner.on('parserstate', (res) => {
@@ -751,7 +796,18 @@ class GrblController {
           // [PRB:0.000,0.000,0.000:0]
           // The `PRB:` probe parameter message includes an additional `:` and suffix value is a boolean.
           // It denotes whether the last probe cycle was successful or not.
-          if (value.result === 1) {
+          const probePhase = this.probeState.probePhase;
+          const probeActive = probePhase === autolevel.PROBE_PHASE_COARSE ||
+            probePhase === autolevel.PROBE_PHASE_FINE;
+
+          if (probeActive && value.result !== 1) {
+            // Failed coarse or fine contact. Do not store the locating touch,
+            // and do not send the rest of the probe program.
+            this.abortSurfaceProbe('[autolevel] Probe contact failed; the point was not saved');
+          } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_COARSE) {
+            this.probeState.probePhase = autolevel.PROBE_PHASE_FINE;
+            log.debug('[autolevel] Coarse contact ignored');
+          } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_FINE) {
             // $13=1 means Grbl reports positions in inches (including PRB)
             // PRB units follow $13 (firmware setting), NOT G20/G21 modal state
             const reportInches = this.runner.settings?.settings?.$13 === '1';
@@ -803,6 +859,7 @@ class GrblController {
               }
 
               this.probeState.probedPositions = newProbedPositions;
+              this.probeState.probePhase = isCompleted ? null : autolevel.PROBE_PHASE_COARSE;
 
               log.debug(`[autolevel] Probed ${newProbedPositions.length}/${this.probeState.probePoints.length}: posX=${probedPos.x.toFixed(3)}, posY=${probedPos.y.toFixed(3)}, posZ=${probedPos.z.toFixed(3)}`);
 
@@ -1514,6 +1571,11 @@ class GrblController {
           this.writeln('$X');
         },
         'reset': () => {
+          if (this.probeState.distanceModeRestorePending) {
+            this.markDistance('G90');
+          }
+          this.probeState.distanceModeRestorePending = false;
+
           this.workflow.stop();
 
           this.feeder.reset();
@@ -1800,6 +1862,8 @@ class GrblController {
             startZ,
             endZ,
             feedrate,
+            fineFeedrate,
+            probeRetract,
           } = params;
 
           if (mode === 'test') {
@@ -1826,6 +1890,15 @@ class GrblController {
             stepY,
           });
 
+          const fineFeed = Number(fineFeedrate);
+          const retract = Number(probeRetract);
+          const resolvedFineFeed = Number.isFinite(fineFeed) && fineFeed > 0 ? fineFeed : feedrate;
+          if (!autolevel.isUsableProbeRetract(retract, startZ, endZ)) {
+            log.warn('[autolevel:start] Probe retract is not usable');
+            return;
+          }
+          const resolvedRetract = retract;
+
           // Reset probe state
           this.probeState = {
             probedPositions: [],
@@ -1843,7 +1916,13 @@ class GrblController {
               startZ,
               endZ,
               feedrate,
+              fineFeedrate: resolvedFineFeed,
+              probeRetract: resolvedRetract,
             },
+            probePhase: autolevel.PROBE_PHASE_COARSE,
+            awaitingProbeRelease: false,
+            probeReleaseClosedOnce: false,
+            distanceModeRestorePending: false,
           };
           autolevel.assignProbeHeight(
             this.probeState,
@@ -1853,7 +1932,9 @@ class GrblController {
 
           log.info(`[autolevel:start] Start probing with ${probePoints.length} points`);
 
-          // Generate probe G-code
+          // G91 covers only the lift. G90 is back on the wire before the pin
+          // check, so the wait and every failure path are already absolute.
+          // The fine probe is queued after the check, from the lifted Z.
           const probeGCodes = [];
           probePoints.forEach((point, index) => {
             const { x, y } = point;
@@ -1864,12 +1945,12 @@ class GrblController {
             probeGCodes.push(`G0 Z${clearanceZ}`);
             probeGCodes.push(`G0 X${x} Y${y}`);
             probeGCodes.push(`G0 Z${startZ}`);
-            if (index === 0) {
-              probeGCodes.push(`G38.2 Z${endZ} F${feedrate / 2}`);
-            } else {
-              probeGCodes.push(`G38.2 Z${endZ} F${feedrate}`);
-            }
-            probeGCodes.push(`G0 Z${clearanceZ}`);
+            probeGCodes.push(`G38.2 Z${endZ} F${feedrate}`);
+            probeGCodes.push('G91');
+            probeGCodes.push(`G0 Z${resolvedRetract}`);
+            probeGCodes.push('G4 P0');
+            probeGCodes.push('G90');
+            probeGCodes.push(PROBE_RELEASE_CHECK);
           });
 
           log.info(`[autolevel:start] Starting probing with ${probePoints.length} points`);
@@ -1886,6 +1967,10 @@ class GrblController {
             minZ: null,
             maxZ: null,
             config: null,
+            probePhase: null,
+            awaitingProbeRelease: false,
+            probeReleaseClosedOnce: false,
+            distanceModeRestorePending: false,
           };
           log.info('[autolevel:stop] Probe stopped and state cleared');
         },
@@ -1907,6 +1992,9 @@ class GrblController {
             this.probeState.maxZ = surface.maxZ;
             this.probeState.normalized = surface.normalized;
             this.probeState.probeHeightMm = surface.probeHeightMm;
+            this.probeState.probePhase = null;
+            this.probeState.awaitingProbeRelease = false;
+            this.probeState.probeReleaseClosedOnce = false;
 
             if (typeof callback === 'function') {
               callback(null, { success: true, state: this.probeState });
@@ -1973,6 +2061,99 @@ class GrblController {
       }
 
       handler();
+    }
+
+    considerProbeRelease() {
+      if (!this.probeState.awaitingProbeRelease) {
+        return;
+      }
+      // The retract's G4 has completed, but ignore a report that is still
+      // moving. Idle means the lift is done and the pin state is current.
+      if (!this.runner.isIdle()) {
+        return;
+      }
+
+      const pinState = String(_.get(this.runner.state, 'status.pinState', ''));
+      if (pinState.indexOf('P') !== -1) {
+        if (!this.probeState.probeReleaseClosedOnce) {
+          this.probeState.probeReleaseClosedOnce = true;
+          this.write('?');
+          return;
+        }
+        this.abortSurfaceProbe('[autolevel] Probe is still triggered after retract; the fine touch was not started');
+        return;
+      }
+
+      this.probeState.awaitingProbeRelease = false;
+      this.probeState.probeReleaseClosedOnce = false;
+      this.queueFineProbe();
+    }
+
+    queueFineProbe() {
+      const liftedZ = this.reportedZToProgramZ(_.get(this.runner.state, 'status.wpos.z'));
+      const { endZ, fineFeedrate, clearanceZ, probeRetract } = this.probeState.config || {};
+      const target = autolevel.fineProbeTargetZ(
+        liftedZ,
+        autolevel.fineProbeTravel(probeRetract),
+        endZ
+      );
+      if (target === null) {
+        this.abortSurfaceProbe('[autolevel] Fine probe target is not usable');
+        return;
+      }
+
+      const lines = [
+        `G38.2 Z${target} F${fineFeedrate}`,
+        `G0 Z${clearanceZ}`,
+      ];
+      this.feeder.state.queue = lines.map(command => ({ command, context: {} }))
+        .concat(this.feeder.state.queue);
+      this.feeder.unhold();
+      this.feeder.next();
+    }
+
+    reportedZToProgramZ(reportedZ) {
+      const z = Number(reportedZ);
+      if (!Number.isFinite(z)) {
+        return null;
+      }
+      const programInches = this.runner.getModalGroup().units === 'G20';
+      const reportInches = this.runner.settings?.settings?.$13 === '1';
+      if (reportInches && !programInches) {
+        return in2mm(z);
+      }
+      if (!reportInches && programInches) {
+        return mm2in(z);
+      }
+      return z;
+    }
+
+    restoreDistanceModeIfIdle() {
+      if (!this.probeState.distanceModeRestorePending || !this.runner.isIdle()) {
+        return;
+      }
+      if (this.probeState.awaitingProbeRelease) {
+        return;
+      }
+      this.probeState.distanceModeRestorePending = false;
+      this.markDistance('G90');
+      this.writeln('G90');
+    }
+
+    markDistance(mode) {
+      const modal = this.runner.getModalGroup();
+      if (modal) {
+        modal.distance = mode;
+      }
+    }
+
+    abortSurfaceProbe(reason) {
+      this.probeState.probePhase = null;
+      this.probeState.awaitingProbeRelease = false;
+      this.probeState.probeReleaseClosedOnce = false;
+      this.feeder.clear();
+      this.feeder.unhold();
+      log.warn(reason);
     }
 
     write(data, context) {

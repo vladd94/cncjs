@@ -15,7 +15,7 @@ import styles from './SetupProbeView.styl';
 const SetupProbeView = ({ state, actions }) => {
   const {
     stepX, stepY, startX, startY, endX, endY,
-    clearanceZ, startZ, endZ, feedrate, probeHeight,
+    clearanceZ, startZ, endZ, feedrate, fineFeedrate, probeRetract, probeHeight,
     probeState, probeProgress, canClick, units,
     validationErrors = {},
   } = state;
@@ -166,6 +166,58 @@ const SetupProbeView = ({ state, actions }) => {
               </div>
               {validationErrors.feedrate && (
                 <small style={{ color: '#a94442' }}>{validationErrors.feedrate}</small>
+              )}
+            </div>
+          </div>
+          <div className="col-xs-6" style={{ paddingLeft: 5 }}>
+            <div className="form-group">
+              <label className="control-label">
+                {i18n._('Fine Probe Feed')}
+                {' '}
+                <Infotip
+                  placement="top"
+                  content={i18n._('Slow feed for the second, precision touch. Only this touch is saved.')}
+                >
+                  <i className="fa fa-info-circle text-muted" />
+                </Infotip>
+              </label>
+              <div className="input-group input-group-sm">
+                <input
+                  type="number" className="form-control" value={fineFeedrate}
+                  min={1} step={1} onChange={actions.handleFineFeedrateChange}
+                  disabled={isProbing}
+                />
+                <div className="input-group-addon">{feedrateUnits}</div>
+              </div>
+              {validationErrors.fineFeedrate && (
+                <small style={{ color: '#a94442' }}>{validationErrors.fineFeedrate}</small>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="row no-gutters">
+          <div className="col-xs-6" style={{ paddingRight: 5 }}>
+            <div className="form-group">
+              <label className="control-label">
+                {i18n._('Probe Retract')}
+                {' '}
+                <Infotip
+                  placement="top"
+                  content={i18n._('Lift after the first touch, before the precision probe.')}
+                >
+                  <i className="fa fa-info-circle text-muted" />
+                </Infotip>
+              </label>
+              <div className="input-group input-group-sm">
+                <input
+                  type="number" className="form-control" value={probeRetract}
+                  min={0} step={step} onChange={actions.handleProbeRetractChange}
+                  disabled={isProbing}
+                />
+                <div className="input-group-addon">{toDisplayUnits(units)}</div>
+              </div>
+              {validationErrors.probeRetract && (
+                <small style={{ color: '#a94442' }}>{validationErrors.probeRetract}</small>
               )}
             </div>
           </div>

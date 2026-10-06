@@ -45,6 +45,52 @@ export {
   serializeProbeSurfaceFile,
 } from './probeSurfaceFile';
 
+// Probe Surface double-touch. Coarse locates the surface; only fine is stored.
+export const PROBE_PHASE_COARSE = 'coarse';
+export const PROBE_PHASE_FINE = 'fine';
+
+// Grbl's homing locate pass travels 1.5x the pull-off, crossing the switch
+// by half that distance. The same scalar is the fine-probe margin, in the
+// units of probeRetract, so millimetres and inches stay consistent.
+export const FINE_PROBE_SEARCH_SCALAR = 1.5;
+
+export const fineProbeTravel = (probeRetract) => {
+  const retract = Number(probeRetract);
+  if (!(retract > 0)) {
+    return 0;
+  }
+  return Math.round(retract * FINE_PROBE_SEARCH_SCALAR * 10000) / 10000;
+};
+
+// The fine search has to pass the contact and stay shorter than the coarse
+// plunge. A retract of 0, or one whose 1.5x travel spans the whole coarse
+// range, is not usable.
+export const isUsableProbeRetract = (probeRetract, startZ, endZ) => {
+  const retract = Number(probeRetract);
+  const travel = fineProbeTravel(retract);
+  const span = Number(startZ) - Number(endZ);
+  return retract > 0 && travel > retract && span > travel;
+};
+
+// Absolute fine-probe Z in program units. Never deeper than the coarse end Z,
+// and never at or above the lifted position.
+export const fineProbeTargetZ = (liftedZ, fineTravel, endZ) => {
+  const lifted = Number(liftedZ);
+  const travel = Number(fineTravel);
+  const limit = Number(endZ);
+  if (!Number.isFinite(lifted) || !(travel > 0) || !Number.isFinite(limit)) {
+    return null;
+  }
+  let target = Math.round((lifted - travel) * 10000) / 10000;
+  if (target < limit) {
+    target = limit;
+  }
+  if (!(target < lifted)) {
+    return null;
+  }
+  return target;
+};
+
 // probeHeight is in the units of the probe G-code (G20/G21). Stored maps are mm.
 export const assignProbeHeight = (probeState, probeHeight, imperial) => {
   const height = Number(probeHeight);
