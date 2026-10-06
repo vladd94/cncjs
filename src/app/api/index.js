@@ -727,6 +727,19 @@ machines.delete = (id) => new Promise((resolve, reject) => {
     });
 });
 
+const exitKiosk = () => new Promise((resolve, reject) => {
+  authrequest
+    .post('/api/system/exit-kiosk')
+    .send({})
+    .end((err, res) => {
+      if (err) {
+        reject(res);
+      } else {
+        resolve(res);
+      }
+    });
+});
+
 machines.run = (id) => new Promise((resolve, reject) => {
   authrequest
     .post('/api/machines/run/' + id)
@@ -775,4 +788,6 @@ export default {
   macros,
   mdi,
   users,
+
+  exitKiosk,
 };

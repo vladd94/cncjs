@@ -1,6 +1,10 @@
 .widgets {
     min-height: 240px; // Keep a minimum space for dropping widgets
 
+    @media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+        min-height: 0;
+    }
+
     :global {
         // Class name for the chosen item
         .sortable-chosen {

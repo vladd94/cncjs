@@ -256,23 +256,93 @@
 
 @media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
     .workspace {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+
+        .dropzone {
+            flex: 1 1 auto;
+            min-height: 0;
+            height: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
         .mobile-pane-switch {
             gap: 4px;
-            padding: 4px 6px;
+            height: 39px;
+            box-sizing: border-box;
+            padding: 1px 6px;
             padding-left: calc(6px + env(safe-area-inset-left, 0px));
             padding-right: calc(6px + env(safe-area-inset-right, 0px));
         }
 
         .mobile-pane-btn {
-            min-height: 32px;
-            padding: 4px 8px;
+            height: 36px;
+            min-height: 36px;
+            box-sizing: border-box;
+            padding: 0 8px;
             border-radius: 8px;
             font-size: 12px;
         }
 
         .workspace-table {
-            min-height: calc(100vh - var(--cnc-header-h, 40px) - var(--cnc-top-chrome-h, 88px) - var(--cnc-bottom-nav-h, 0px));
-            min-height: calc(100dvh - var(--cnc-header-h, 40px) - var(--cnc-top-chrome-h, 88px) - var(--cnc-bottom-nav-h, 0px) - env(safe-area-inset-bottom, 0px));
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+            height: auto;
+            min-height: 0;
+            padding-top: var(--cnc-top-chrome-h, 77px);
+        }
+
+        .workspace-table-row {
+            flex: 1 1 auto;
+            min-height: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .primary-container.mobile-pane,
+        .secondary-container.mobile-pane,
+        .default-container.mobile-pane {
+            flex: 1 1 auto;
+            min-height: 0;
+            overflow: auto;
+            padding: 4px 8px 52px;
+        }
+
+        :global {
+            button.btn {
+                min-height: 36px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                border-radius: 8px;
+                box-sizing: border-box;
+                line-height: 1.2;
+            }
+
+            .form-control {
+                min-height: 36px;
+                height: 36px;
+                font-size: 14px;
+                padding-top: 4px;
+                padding-bottom: 4px;
+                border-radius: 8px;
+            }
+
+            .form-group {
+                margin-bottom: 8px;
+            }
+
+            .control-label {
+                margin-bottom: 2px;
+                font-size: 12px;
+            }
+
+            .input-group-addon {
+                padding: 4px 8px;
+            }
         }
     }
 }

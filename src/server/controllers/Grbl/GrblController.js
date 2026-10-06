@@ -130,7 +130,11 @@ class GrblController {
     actionTime = {
       queryParserState: 0,
       queryStatusReport: 0,
-      senderFinishTime: 0
+      senderFinishTime: 0,
+      // Counts parsed status reports. Snapshotted when the sender finishes
+      // so a pre-job Idle report cannot satisfy the completion check.
+      statusReportSequence: 0,
+      statusReportAtFinish: 0
     };
 
     // Message Slot
@@ -501,6 +505,7 @@ class GrblController {
       });
       this.sender.on('end', (finishTime) => {
         this.actionTime.senderFinishTime = finishTime;
+        this.actionTime.statusReportAtFinish = this.actionTime.statusReportSequence;
       });
 
       // Workflow
@@ -557,6 +562,7 @@ class GrblController {
           this.initController();
         }
 
+        this.actionTime.statusReportSequence += 1;
         this.actionMask.queryStatusReport = false;
 
         if (this.actionMask.replyStatusReport) {
@@ -958,11 +964,6 @@ class GrblController {
           this.emit('sender:status', this.sender.toJSON());
         }
 
-        const zeroOffset = _.isEqual(
-          this.runner.getWorkPosition(this.state),
-          this.runner.getWorkPosition(this.runner.state)
-        );
-
         // Grbl settings
         if (this.settings !== this.runner.settings) {
           this.settings = this.runner.settings;
@@ -989,9 +990,15 @@ class GrblController {
         // $G - Parser State
         queryParserState();
 
-        // Check if the machine has stopped movement after completion
+        // `ok` means Grbl accepted the line, not that motion finished. The
+        // sender can emit `end` while the last buffered move is still running,
+        // and runner.state may still hold an Idle report from before that
+        // move. Require a status report parsed after `end`, then Idle for the
+        // settling window. The `?` written above is not that report; its
+        // reply arrives later and increments statusReportSequence.
         if (this.actionTime.senderFinishTime > 0) {
-          const machineIdle = zeroOffset && this.runner.isIdle();
+          const statusAfterFinish = this.actionTime.statusReportSequence > this.actionTime.statusReportAtFinish;
+          const machineIdle = statusAfterFinish && this.runner.isIdle();
           const now = new Date().getTime();
           const timespan = Math.abs(now - this.actionTime.senderFinishTime);
           const toleranceTime = 500; // in milliseconds

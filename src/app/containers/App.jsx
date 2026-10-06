@@ -89,7 +89,7 @@ class App extends PureComponent {
               <Workspace
                 {...this.props}
                 style={{
-                  display: (location.pathname !== '/workspace') ? 'none' : 'block'
+                  display: (location.pathname !== '/workspace') ? 'none' : undefined
                 }}
               />
               {location.pathname.indexOf('/settings') === 0 &&

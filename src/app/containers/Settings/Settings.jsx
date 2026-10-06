@@ -27,6 +27,7 @@ import Controller from './Controller';
 import Commands from './Commands';
 import Events from './Events';
 import About from './About';
+import ExitKiosk from './ExitKiosk';
 import styles from './index.styl';
 
 const mapSectionPathToId = (path = '') => {
@@ -1243,6 +1244,9 @@ class Settings extends PureComponent {
                 <nav className={styles.navbar}>
                   <ul className={styles.nav}>
                     {sectionItems}
+                    <li>
+                      <ExitKiosk />
+                    </li>
                   </ul>
                 </nav>
               </div>

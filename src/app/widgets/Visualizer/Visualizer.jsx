@@ -589,6 +589,22 @@ class Visualizer extends Component {
       const clientHeight = document.documentElement.clientHeight;
       const isMobile = document.documentElement.classList.contains('cncjs-mobile');
       if (isMobile) {
+        const shortLandscape = window.matchMedia(
+          '(max-width: 1100px) and (orientation: landscape) and (max-height: 600px)'
+        ).matches;
+        if (shortLandscape) {
+          // Read the compact chrome from App.styl so the canvas fills the
+          // leftover viewport instead of the tall portrait stack.
+          const styles = window.getComputedStyle(document.documentElement);
+          const px = (name, fallback) => {
+            const value = parseFloat(styles.getPropertyValue(name));
+            return Number.isFinite(value) ? value : fallback;
+          };
+          const reserved = px('--cnc-header-h', 40) +
+            px('--cnc-top-chrome-h', 77) +
+            px('--cnc-viz-chrome-h', 88);
+          return Math.max(180, clientHeight - reserved);
+        }
         // Header + machine bar + pane switch + bottom nav + visualizer chrome.
         // Cap height for low-power GPUs (e.g. Pi panels at 1024×600).
         const chrome = 52 + 76 + 52 + 64 + 76;

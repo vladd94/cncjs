@@ -152,7 +152,10 @@
     .widget {
         margin-bottom: 12px;
         border-radius: var(--cnc-radius, 10px);
-        overflow: hidden;
+        // Visible so header menus (3D View, G54, widget options) can hang
+        // over the canvas. overflow:hidden clipped them to this box, which
+        // collapses to the header when the visualizer content is absolute.
+        overflow: visible;
         background: var(--cnc-surface, #fff);
         border: 1px solid var(--cnc-border, #cfd8e3);
 
@@ -190,6 +193,14 @@
 
         .widget-content {
             padding: 12px;
+        }
+
+        @media (orientation: landscape) and (max-height: 600px) {
+            margin-bottom: 8px;
+
+            .widget-content {
+                padding: 8px;
+            }
         }
     }
 }

@@ -661,5 +661,10 @@
   "Must be zero or greater": "Must be zero or greater",
   "Legacy raw probe map. Z values still include the probe device, so autolevel subtracts the height at work X0 Y0.": "Legacy raw probe map. Z values still include the probe device, so autolevel subtracts the height at work X0 Y0.",
   "Probe Height": "Probe Height",
-  "Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0.": "Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0."
+  "Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0.": "Thickness of the probe device. Subtracted from each trigger so the height map is the surface relative to work Z0.",
+  "Exit to Desktop": "Exit to Desktop",
+  "Exit CNCjs and return to the desktop?": "Exit CNCjs and return to the desktop?",
+  "A CNC job is currently running. Closing the display will not stop the job.": "A CNC job is currently running. Closing the display will not stop the job.",
+  "Returning to desktop...": "Returning to desktop...",
+  "Could not exit kiosk mode.": "Could not exit kiosk mode."
 }

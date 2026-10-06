@@ -71,7 +71,9 @@
   .machine-bar {
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 4px;
-    padding: 3px 6px;
+    height: 38px;
+    box-sizing: border-box;
+    padding: 0 6px;
     padding-left: calc(6px + env(safe-area-inset-left, 0px));
     padding-right: calc(6px + env(safe-area-inset-right, 0px));
   }
@@ -79,13 +81,16 @@
   .machine-btn {
     flex-direction: row;
     gap: 4px;
-    min-height: 40px;
-    padding: 4px 8px;
+    height: 36px;
+    min-height: 36px;
+    max-height: 36px;
+    box-sizing: border-box;
+    padding: 0 8px;
     border-radius: 8px;
     font-size: 11px;
 
     > .fa {
-      font-size: 14px;
+      font-size: 13px;
     }
 
     > span {
