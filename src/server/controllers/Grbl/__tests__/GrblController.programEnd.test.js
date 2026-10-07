@@ -3,6 +3,7 @@ import GrblController from '../GrblController';
 import { createController } from '../../__tests__/helpers/createController';
 import {
   WORKFLOW_STATE_IDLE,
+  WORKFLOW_STATE_PAUSED,
   WORKFLOW_STATE_RUNNING,
 } from '../../../lib/Workflow';
 
@@ -202,5 +203,118 @@ describe('Grbl program completion', () => {
     pollWhile(controller, 'Idle', 1000);
     expect(controller.workflow.state).toBe(WORKFLOW_STATE_IDLE);
     expect(stops).toEqual([WORKFLOW_STATE_IDLE, WORKFLOW_STATE_IDLE]);
+  });
+
+  test('finishes after every line is sent when one acknowledgement is still missing', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, (_, index) => `G0 X${index}`).join('\n');
+
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+    for (let i = 0; i < 9; i += 1) {
+      controller.runner.parse('ok');
+    }
+
+    expect(controller.sender.state.sent).toBe(10);
+    expect(controller.sender.state.total).toBe(10);
+    expect(controller.sender.state.received).toBe(9);
+    expect(controller.sender.state.finishTime).toBe(0);
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+
+    controller.runner.parse(status('Run'));
+    advance(2000);
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+    expect(stops).toEqual([]);
+
+    controller.runner.parse(status('Idle'));
+    advance(250);
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+
+    advance(750);
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_IDLE);
+    expect(stops).toEqual([WORKFLOW_STATE_IDLE]);
+  });
+
+  test('does not finish before the last line has been sent', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, () => 'G0 X12345678').join('\n');
+
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+
+    expect(controller.sender.state.total).toBe(10);
+    expect(controller.sender.state.sent).toBe(9);
+
+    controller.runner.parse(status('Idle'));
+    advance(2000);
+
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+    expect(stops).toEqual([]);
+    expect(controller.actionTime.allLinesSentTime).toBe(0);
+  });
+
+  test('a stale Idle from before the last line is sent does not finish the job', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, (_, index) => `G0 X${index}`).join('\n');
+
+    controller.runner.parse(status('Idle'));
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+    expect(controller.sender.state.sent).toBe(10);
+
+    advance(2000);
+
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+    expect(stops).toEqual([]);
+  });
+
+  test('a fresh Hold after the last line is sent does not finish the job', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, (_, index) => `G0 X${index}`).join('\n');
+
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+    expect(controller.sender.state.sent).toBe(10);
+
+    controller.runner.parse(status('Hold:0'));
+    advance(2000);
+
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+    expect(stops).toEqual([]);
+    expect(controller.runner.state.status.activeState).toBe('Hold');
+  });
+
+  test('a fresh Alarm after the last line is sent does not finish the job', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, (_, index) => `G0 X${index}`).join('\n');
+
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+    expect(controller.sender.state.sent).toBe(10);
+
+    controller.runner.parse(status('Alarm'));
+    advance(2000);
+
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
+    expect(stops).toEqual([]);
+    expect(controller.runner.isIdle()).toBe(false);
+  });
+
+  test('a paused workflow does not finish after the last line is sent', () => {
+    const { controller, stops } = createRunningController();
+    const gcode = Array.from({ length: 10 }, (_, index) => `G0 X${index}`).join('\n');
+
+    controller.command('gcode:load', 'job.nc', gcode);
+    controller.command('gcode:start');
+    expect(controller.sender.state.sent).toBe(10);
+
+    controller.command('gcode:pause');
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_PAUSED);
+
+    controller.runner.parse(status('Idle'));
+    advance(2000);
+
+    expect(controller.workflow.state).toBe(WORKFLOW_STATE_PAUSED);
+    expect(stops).toEqual([]);
   });
 });

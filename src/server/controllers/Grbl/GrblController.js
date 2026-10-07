@@ -22,6 +22,7 @@ import delay from '../../lib/delay';
 import evaluateAssignmentExpression from '../../lib/evaluate-assignment-expression';
 import x from '../../lib/json-stringify';
 import logger from '../../lib/logger';
+import { appendProgramTailLog, clearProgramTailLog } from '../../lib/programTailLog';
 import translateExpression from '../../lib/translate-expression';
 import config from '../../services/configstore';
 import monitor from '../../services/monitor';
@@ -136,16 +137,23 @@ class GrblController {
       queryParserState: 0,
       queryStatusReport: 0,
       senderFinishTime: 0,
-      // Counts parsed status reports. Snapshotted when the sender finishes
-      // so a pre-job Idle report cannot satisfy the completion check.
+      // Counts parsed status reports. Snapshotted when every program line
+      // has been transmitted, so an earlier Idle cannot finish the job.
       statusReportSequence: 0,
-      statusReportAtFinish: 0
+      statusReportAtFinish: 0,
+      allLinesSentTime: 0,
+      statusReportAtAllLinesSent: 0
     };
 
     // Tail diagnostics. Identical completion ticks are not repeated.
     senderTraceTail = false;
 
     senderTraceDecision = '';
+
+    // File-log dedup. Not used by the completion decision.
+    programTailStatusState = '';
+
+    programTailDecision = '';
 
     // Message Slot
     messageSlot = null;
@@ -550,23 +558,33 @@ class GrblController {
         log.silly(`> ${line}`);
       });
       this.sender.on('hold', () => {
-        const { sent, received, total } = this.sender.state;
+        const { sent, received, total, holdReason } = this.sender.state;
         this.traceSender(`HOLD sent=${sent} received=${received} total=${total} hold=${this.senderHoldLabel()} workflow=${this.workflow.state}`);
+        const reason = (holdReason && (holdReason.data || holdReason.msg)) || '';
+        appendProgramTailLog(`HOLD\nreason=${reason}\nsent=${sent}\nreceived=${received}\ntotal=${total}\nworkflow=${this.workflow.state}`);
       });
       this.sender.on('unhold', () => {
         const { sent, received, total } = this.sender.state;
         this.traceSender(`UNHOLD sent=${sent} received=${received} total=${total} workflow=${this.workflow.state}`);
+        appendProgramTailLog(`UNHOLD\nsent=${sent}\nreceived=${received}\ntotal=${total}\nworkflow=${this.workflow.state}`);
+      });
+      this.sender.on('change', () => {
+        this.noteAllLinesSent();
       });
       this.sender.on('start', (startTime) => {
-        this.actionTime.senderFinishTime = 0;
+        this.clearProgramCompletion();
         this.senderTraceTail = false;
         this.senderTraceDecision = '';
+        this.programTailStatusState = '';
+        this.programTailDecision = '';
+        const { name, total } = this.sender.state;
+        clearProgramTailLog();
+        appendProgramTailLog(`JOB START\nname=${name}\ntotal=${total}`);
       });
       this.sender.on('end', (finishTime) => {
         const { sent, received, total } = this.sender.state;
         this.traceSender(`SENDER END sent=${sent} received=${received} total=${total} hold=${this.senderHoldLabel()} finishTime=${finishTime} workflow=${this.workflow.state}`);
-        this.actionTime.senderFinishTime = finishTime;
-        this.actionTime.statusReportAtFinish = this.actionTime.statusReportSequence;
+        appendProgramTailLog(`SENDER END\nsent=${sent}\nreceived=${received}\ntotal=${total}\nworkflow=${this.workflow.state}`);
       });
 
       // Workflow
@@ -624,6 +642,7 @@ class GrblController {
         }
 
         this.actionTime.statusReportSequence += 1;
+        this.logProgramTailStatus();
         this.actionMask.queryStatusReport = false;
         this.considerProbeRelease();
         this.restoreDistanceModeIfIdle();
@@ -936,6 +955,9 @@ class GrblController {
 
       this.runner.on('feedback', (res) => {
         this.emit('serialport:read', res.raw);
+        if (res && res.message === 'Pgm End') {
+          appendProgramTailLog('GRBL MSG PGM END');
+        }
       });
 
       this.runner.on('settings', (res) => {
@@ -1101,26 +1123,28 @@ class GrblController {
         // $G - Parser State
         queryParserState();
 
-        // `ok` means Grbl accepted the line, not that motion finished. The
-        // sender can emit `end` while the last buffered move is still running,
-        // and runner.state may still hold an Idle report from before that
-        // move. Require a status report parsed after `end`, then Idle for the
-        // settling window. The `?` written above is not that report; its
-        // reply arrives later and increments statusReportSequence.
-        if (this.actionTime.senderFinishTime > 0) {
-          const statusAfterFinish = this.actionTime.statusReportSequence > this.actionTime.statusReportAtFinish;
-          const machineIdle = statusAfterFinish && this.runner.isIdle();
+        // Transmitting the last line does not mean motion has finished.
+        // A missing ok must not block completion either. Once every program
+        // line has been sent, wait for a status report that arrives after
+        // that send and stays Idle. The `?` written above is not that report.
+        if (this.workflow.state === WORKFLOW_STATE_RUNNING && this.actionTime.allLinesSentTime > 0) {
+          const statusAfterLastSend = this.actionTime.statusReportSequence > this.actionTime.statusReportAtAllLinesSent;
+          const machineIdle = statusAfterLastSend && this.runner.isIdle();
           const now = new Date().getTime();
-          const timespan = Math.abs(now - this.actionTime.senderFinishTime);
+          const timespan = Math.abs(now - this.actionTime.allLinesSentTime);
           const toleranceTime = 500; // in milliseconds
           const activeState = _.get(this.runner.state, 'status.activeState', '');
+          const { sent, received, total } = this.sender.state;
           const willStop = machineIdle && (timespan > toleranceTime);
           const decision = [
             `statusReportSequence=${this.actionTime.statusReportSequence}`,
-            `statusReportAtFinish=${this.actionTime.statusReportAtFinish}`,
+            `statusReportAtAllLinesSent=${this.actionTime.statusReportAtAllLinesSent}`,
             `activeState=${activeState || '-'}`,
             `isIdle=${this.runner.isIdle()}`,
-            `senderFinishTime=${this.actionTime.senderFinishTime}`,
+            `allLinesSentTime=${this.actionTime.allLinesSentTime}`,
+            `sent=${sent}`,
+            `received=${received}`,
+            `total=${total}`,
             `workflow=${this.workflow.state}`,
             `gcodeStop=${willStop}`,
           ].join(' ');
@@ -1129,13 +1153,41 @@ class GrblController {
             this.traceSender(`COMPLETE ${decision}`);
           }
 
+          try {
+            const fileDecision = [
+              this.actionTime.statusReportAtAllLinesSent,
+              this.actionTime.statusReportSequence,
+              statusAfterLastSend,
+              activeState || '-',
+              this.runner.isIdle(),
+              this.workflow.state,
+              willStop,
+            ].join('|');
+            if (fileDecision !== this.programTailDecision) {
+              this.programTailDecision = fileDecision;
+              appendProgramTailLog([
+                'COMPLETION',
+                `allLinesSentTime=${this.actionTime.allLinesSentTime}`,
+                `statusReportAtAllLinesSent=${this.actionTime.statusReportAtAllLinesSent}`,
+                `statusReportSequence=${this.actionTime.statusReportSequence}`,
+                `statusAfterLastSend=${statusAfterLastSend}`,
+                `activeState=${activeState || '-'}`,
+                `runnerIdle=${this.runner.isIdle()}`,
+                `settleMs=${timespan}`,
+                `workflow=${this.workflow.state}`,
+                `gcodeStop=${willStop}`,
+              ].join('\n'));
+            }
+          } catch (err) {
+            log.silly(`Program tail log skipped: ${err}`);
+          }
+
           if (!machineIdle) {
-            // Extend the sender finish time
-            this.actionTime.senderFinishTime = now;
+            this.actionTime.allLinesSentTime = now;
           } else if (timespan > toleranceTime) {
             log.silly(`Finished sending G-code: timespan=${timespan}`);
 
-            this.actionTime.senderFinishTime = 0;
+            this.clearProgramCompletion();
 
             // Stop workflow
             this.command('gcode:stop');
@@ -1245,7 +1297,60 @@ class GrblController {
       this.actionMask.replyStatusReport = false;
       this.actionTime.queryParserState = 0;
       this.actionTime.queryStatusReport = 0;
+      this.clearProgramCompletion();
+    }
+
+    clearProgramCompletion() {
       this.actionTime.senderFinishTime = 0;
+      this.actionTime.allLinesSentTime = 0;
+      this.actionTime.statusReportAtAllLinesSent = 0;
+    }
+
+    noteAllLinesSent() {
+      if (this.actionTime.allLinesSentTime > 0) {
+        return;
+      }
+      const { sent, total } = this.sender.state;
+      if (!(total > 0) || sent < total) {
+        return;
+      }
+      this.actionTime.allLinesSentTime = new Date().getTime();
+      this.actionTime.statusReportAtAllLinesSent = this.actionTime.statusReportSequence;
+      const { received } = this.sender.state;
+      appendProgramTailLog([
+        'ALL LINES SENT',
+        `sent=${sent}`,
+        `received=${received}`,
+        `total=${total}`,
+        `statusReportSequence=${this.actionTime.statusReportSequence}`,
+        `workflow=${this.workflow.state}`,
+      ].join('\n'));
+    }
+
+    logProgramTailStatus() {
+      try {
+        if (!(this.actionTime.allLinesSentTime > 0)) {
+          return;
+        }
+        const activeState = _.get(this.runner.state, 'status.activeState', '') || '-';
+        if (activeState === this.programTailStatusState) {
+          return;
+        }
+        this.programTailStatusState = activeState;
+        const mpos = this.runner.getMachinePosition();
+        const wpos = this.runner.getWorkPosition();
+        const point = (pos) => [pos && pos.x, pos && pos.y, pos && pos.z].join(',');
+        appendProgramTailLog([
+          'STATUS',
+          `seq=${this.actionTime.statusReportSequence}`,
+          `activeState=${activeState}`,
+          `mpos=${point(mpos)}`,
+          `wpos=${point(wpos)}`,
+          `workflow=${this.workflow.state}`,
+        ].join('\n'));
+      } catch (err) {
+        log.warn(`Program tail log failed: ${err && err.message ? err.message : err}`);
+      }
     }
 
     destroy() {
@@ -1505,9 +1610,10 @@ class GrblController {
             context = {};
           }
 
-          // Motion can still be running when the last line is acknowledged.
-          // Completion waits for a status report that arrives after Sender end
-          // and stays Idle, so the load does not append a synthetic dwell.
+          // Motion can still be running after the last line is transmitted.
+          // Completion waits for a later Idle status, so the load does not
+          // append a synthetic dwell.
+          this.clearProgramCompletion();
           const ok = this.sender.load(name, gcode, context);
           if (!ok) {
             callback(new Error(`Invalid G-code: name=${name}`));
@@ -1524,6 +1630,7 @@ class GrblController {
           callback(null, this.sender.toJSON());
         },
         'gcode:unload': () => {
+          this.clearProgramCompletion();
           this.workflow.stop();
 
           // Sender
@@ -1554,9 +1661,12 @@ class GrblController {
         // @param {object} options The options object.
         // @param {boolean} [options.force] Whether to force stop a G-code program. Defaults to false.
         'gcode:stop': async () => {
+          appendProgramTailLog(`GCODE STOP\nworkflow before=${this.workflow.state}`);
+          this.clearProgramCompletion();
           this.event.trigger('gcode:stop');
 
           this.workflow.stop();
+          appendProgramTailLog('WORKFLOW IDLE');
 
           const [options] = args;
           const { force = false } = { ...options };
@@ -1643,6 +1753,7 @@ class GrblController {
           this.writeln('$X');
         },
         'reset': () => {
+          this.clearProgramCompletion();
           if (this.probeState.distanceModeRestorePending) {
             this.markDistance('G90');
           }
@@ -2408,6 +2519,7 @@ class GrblController {
       }
       const sourceLine = this.sender.state.lines[sent - 1];
       this.traceSender(`SEND ${sent}/${total}: ${line} source=${sourceLine}`);
+      appendProgramTailLog(`SEND sent=${sent} total=${total} line=${line}`);
     }
 
     traceSenderAck() {
@@ -2416,6 +2528,7 @@ class GrblController {
         return;
       }
       this.traceSender(`ACK ${received}/${sent}/${total} hold=${this.senderHoldLabel()} workflow=${this.workflow.state}`);
+      appendProgramTailLog(`ACK received=${received} sent=${sent} total=${total}`);
     }
 
     write(data, context) {
