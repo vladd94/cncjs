@@ -137,12 +137,9 @@ class GrblController {
       queryParserState: 0,
       queryStatusReport: 0,
       senderFinishTime: 0,
-      // Counts parsed status reports. Snapshotted when every program line
-      // has been transmitted, so an earlier Idle cannot finish the job.
+      // Counts parsed status reports for the tail log.
       statusReportSequence: 0,
-      statusReportAtFinish: 0,
-      allLinesSentTime: 0,
-      statusReportAtAllLinesSent: 0
+      statusReportAtFinish: 0
     };
 
     // Tail diagnostics. Identical completion ticks are not repeated.
@@ -568,11 +565,8 @@ class GrblController {
         this.traceSender(`UNHOLD sent=${sent} received=${received} total=${total} workflow=${this.workflow.state}`);
         appendProgramTailLog(`UNHOLD\nsent=${sent}\nreceived=${received}\ntotal=${total}\nworkflow=${this.workflow.state}`);
       });
-      this.sender.on('change', () => {
-        this.noteAllLinesSent();
-      });
       this.sender.on('start', (startTime) => {
-        this.clearProgramCompletion();
+        this.actionTime.senderFinishTime = 0;
         this.senderTraceTail = false;
         this.senderTraceDecision = '';
         this.programTailStatusState = '';
@@ -582,6 +576,7 @@ class GrblController {
         appendProgramTailLog(`JOB START\nname=${name}\ntotal=${total}`);
       });
       this.sender.on('end', (finishTime) => {
+        this.actionTime.senderFinishTime = finishTime;
         const { sent, received, total } = this.sender.state;
         this.traceSender(`SENDER END sent=${sent} received=${received} total=${total} hold=${this.senderHoldLabel()} finishTime=${finishTime} workflow=${this.workflow.state}`);
         appendProgramTailLog(`SENDER END\nsent=${sent}\nreceived=${received}\ntotal=${total}\nworkflow=${this.workflow.state}`);
@@ -1097,6 +1092,11 @@ class GrblController {
           this.emit('sender:status', this.sender.toJSON());
         }
 
+        const zeroOffset = _.isEqual(
+          this.runner.getWorkPosition(this.state),
+          this.runner.getWorkPosition(this.runner.state)
+        );
+
         // Grbl settings
         if (this.settings !== this.runner.settings) {
           this.settings = this.runner.settings;
@@ -1123,25 +1123,20 @@ class GrblController {
         // $G - Parser State
         queryParserState();
 
-        // Transmitting the last line does not mean motion has finished.
-        // A missing ok must not block completion either. Once every program
-        // line has been sent, wait for a status report that arrives after
-        // that send and stays Idle. The `?` written above is not that report.
-        if (this.workflow.state === WORKFLOW_STATE_RUNNING && this.actionTime.allLinesSentTime > 0) {
-          const statusAfterLastSend = this.actionTime.statusReportSequence > this.actionTime.statusReportAtAllLinesSent;
-          const machineIdle = statusAfterLastSend && this.runner.isIdle();
+        // Check if the machine has stopped movement after completion
+        if (this.actionTime.senderFinishTime > 0) {
+          const machineIdle = zeroOffset && this.runner.isIdle();
           const now = new Date().getTime();
-          const timespan = Math.abs(now - this.actionTime.allLinesSentTime);
+          const timespan = Math.abs(now - this.actionTime.senderFinishTime);
           const toleranceTime = 500; // in milliseconds
           const activeState = _.get(this.runner.state, 'status.activeState', '');
           const { sent, received, total } = this.sender.state;
           const willStop = machineIdle && (timespan > toleranceTime);
           const decision = [
-            `statusReportSequence=${this.actionTime.statusReportSequence}`,
-            `statusReportAtAllLinesSent=${this.actionTime.statusReportAtAllLinesSent}`,
+            `senderFinishTime=${this.actionTime.senderFinishTime}`,
+            `positionStable=${zeroOffset}`,
             `activeState=${activeState || '-'}`,
             `isIdle=${this.runner.isIdle()}`,
-            `allLinesSentTime=${this.actionTime.allLinesSentTime}`,
             `sent=${sent}`,
             `received=${received}`,
             `total=${total}`,
@@ -1155,9 +1150,7 @@ class GrblController {
 
           try {
             const fileDecision = [
-              this.actionTime.statusReportAtAllLinesSent,
-              this.actionTime.statusReportSequence,
-              statusAfterLastSend,
+              zeroOffset,
               activeState || '-',
               this.runner.isIdle(),
               this.workflow.state,
@@ -1167,10 +1160,8 @@ class GrblController {
               this.programTailDecision = fileDecision;
               appendProgramTailLog([
                 'COMPLETION',
-                `allLinesSentTime=${this.actionTime.allLinesSentTime}`,
-                `statusReportAtAllLinesSent=${this.actionTime.statusReportAtAllLinesSent}`,
-                `statusReportSequence=${this.actionTime.statusReportSequence}`,
-                `statusAfterLastSend=${statusAfterLastSend}`,
+                `senderFinishTime=${this.actionTime.senderFinishTime}`,
+                `positionStable=${zeroOffset}`,
                 `activeState=${activeState || '-'}`,
                 `runnerIdle=${this.runner.isIdle()}`,
                 `settleMs=${timespan}`,
@@ -1183,11 +1174,12 @@ class GrblController {
           }
 
           if (!machineIdle) {
-            this.actionTime.allLinesSentTime = now;
+            // Extend the sender finish time
+            this.actionTime.senderFinishTime = now;
           } else if (timespan > toleranceTime) {
             log.silly(`Finished sending G-code: timespan=${timespan}`);
 
-            this.clearProgramCompletion();
+            this.actionTime.senderFinishTime = 0;
 
             // Stop workflow
             this.command('gcode:stop');
@@ -1302,34 +1294,11 @@ class GrblController {
 
     clearProgramCompletion() {
       this.actionTime.senderFinishTime = 0;
-      this.actionTime.allLinesSentTime = 0;
-      this.actionTime.statusReportAtAllLinesSent = 0;
-    }
-
-    noteAllLinesSent() {
-      if (this.actionTime.allLinesSentTime > 0) {
-        return;
-      }
-      const { sent, total } = this.sender.state;
-      if (!(total > 0) || sent < total) {
-        return;
-      }
-      this.actionTime.allLinesSentTime = new Date().getTime();
-      this.actionTime.statusReportAtAllLinesSent = this.actionTime.statusReportSequence;
-      const { received } = this.sender.state;
-      appendProgramTailLog([
-        'ALL LINES SENT',
-        `sent=${sent}`,
-        `received=${received}`,
-        `total=${total}`,
-        `statusReportSequence=${this.actionTime.statusReportSequence}`,
-        `workflow=${this.workflow.state}`,
-      ].join('\n'));
     }
 
     logProgramTailStatus() {
       try {
-        if (!(this.actionTime.allLinesSentTime > 0)) {
+        if (!(this.actionTime.senderFinishTime > 0)) {
           return;
         }
         const activeState = _.get(this.runner.state, 'status.activeState', '') || '-';
@@ -1610,11 +1579,13 @@ class GrblController {
             context = {};
           }
 
-          // Motion can still be running after the last line is transmitted.
-          // Completion waits for a later Idle status, so the load does not
-          // append a synthetic dwell.
+          // G4 P0 or P with a very small value will empty the planner queue and then
+          // respond with an ok when the dwell is complete. At that instant, there will
+          // be no queued motions, as long as no more commands were sent after the G4.
+          // This is the fastest way to do it without having to check the status reports.
           this.clearProgramCompletion();
-          const ok = this.sender.load(name, gcode, context);
+          const dwell = '%wait ; Wait for the planner to empty';
+          const ok = this.sender.load(name, gcode + '\n' + dwell, context);
           if (!ok) {
             callback(new Error(`Invalid G-code: name=${name}`));
             return;

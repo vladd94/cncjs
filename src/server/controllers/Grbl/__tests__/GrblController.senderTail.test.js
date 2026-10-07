@@ -22,6 +22,9 @@ const MOTION_ONLY = [
   'G0 X10',
 ].join('\n');
 
+const PLANNER_WAIT = '%wait ; Wait for the planner to empty';
+const PLANNER_DWELL = 'G4 P0.5\n';
+
 const TRANSMITTED = [
   'G21\n',
   'G90\n',
@@ -29,6 +32,7 @@ const TRANSMITTED = [
   'G0 X0\n',
   'M5\n',
   'M30\n',
+  PLANNER_DWELL,
 ];
 
 const activeControllers = [];
@@ -91,16 +95,15 @@ describe('Grbl sender tail', () => {
     jest.useRealTimers();
   });
 
-  test('loads M30 as the final sender line', () => {
+  test('loads M30 and then the planner wait', () => {
     const { controller } = createReadyController();
     loadProgram(controller);
 
-    expect(controller.sender.state.lines.slice(-2)).toEqual(['M5', 'M30']);
-    expect(controller.sender.state.lines.some((line) => line.startsWith('%wait'))).toBe(false);
-    expect(controller.sender.state.total).toBe(6);
+    expect(controller.sender.state.lines.slice(-3)).toEqual(['M5', 'M30', PLANNER_WAIT]);
+    expect(controller.sender.state.total).toBe(7);
   });
 
-  test('M30 acknowledgement ends the sender and leaves the workflow running until a fresh Idle', () => {
+  test('the planner-wait acknowledgement ends the sender and Idle settles the workflow', () => {
     const { controller, writes } = createReadyController();
     const ends = [];
     controller.sender.on('end', () => {
@@ -113,7 +116,7 @@ describe('Grbl sender tail', () => {
     controller.command('gcode:start');
 
     expect(programWrites(writes)).toEqual(TRANSMITTED);
-    expect(controller.sender.state.hold).toBe(false);
+    expect(controller.sender.state.hold).toBe(true);
     expect(controller.sender.state.finishTime).toBe(0);
 
     TRANSMITTED.slice(0, 5).forEach((line) => {
@@ -123,9 +126,14 @@ describe('Grbl sender tail', () => {
     expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
 
     replyTo(controller, 'M30');
-
-    expect(ends).toEqual([{ received: 6, workflow: WORKFLOW_STATE_RUNNING }]);
+    expect(ends).toEqual([]);
     expect(controller.sender.state.received).toBe(6);
+    expect(controller.sender.state.finishTime).toBe(0);
+
+    replyTo(controller, 'G4 P0.5');
+
+    expect(ends).toEqual([{ received: 7, workflow: WORKFLOW_STATE_RUNNING }]);
+    expect(controller.sender.state.received).toBe(7);
     expect(controller.sender.state.hold).toBe(false);
     expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
 
@@ -158,19 +166,20 @@ describe('Grbl sender tail', () => {
     loadProgram(controller, MOTION_ONLY);
     controller.command('gcode:start');
 
-    expect(programWrites(writes)).toEqual(['G21\n', 'G90\n', 'G0 X10\n']);
-    expect(controller.sender.state.lines).toEqual(['G21', 'G90', 'G0 X10']);
-    expect(controller.sender.state.hold).toBe(false);
+    expect(programWrites(writes)).toEqual(['G21\n', 'G90\n', 'G0 X10\n', PLANNER_DWELL]);
+    expect(controller.sender.state.lines).toEqual(['G21', 'G90', 'G0 X10', PLANNER_WAIT]);
+    expect(controller.sender.state.hold).toBe(true);
 
-    ['G21', 'G90'].forEach((line) => {
+    ['G21', 'G90', 'G0 X10'].forEach((line) => {
       replyTo(controller, line);
     });
     expect(ends).toEqual([]);
+    expect(controller.sender.state.finishTime).toBe(0);
 
-    replyTo(controller, 'G0 X10');
+    replyTo(controller, 'G4 P0.5');
 
     expect(ends).toEqual([WORKFLOW_STATE_RUNNING]);
-    expect(controller.sender.state.received).toBe(3);
+    expect(controller.sender.state.received).toBe(4);
     expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
 
     controller.runner.parse(status('Run'));
@@ -181,19 +190,20 @@ describe('Grbl sender tail', () => {
     finishWithFreshIdle(controller);
   });
 
-  test('M2 is acknowledged like any other final line and does not append a dwell', () => {
+  test('M2 is acknowledged and the planner wait ends the sender', () => {
     const { controller, writes } = createReadyController();
     loadProgram(controller, 'G0 X1\nM2');
     controller.command('gcode:start');
 
-    expect(controller.sender.state.lines).toEqual(['G0 X1', 'M2']);
-    expect(programWrites(writes)).toEqual(['G0 X1\n', 'M2\n']);
-    expect(controller.sender.state.hold).toBe(false);
+    expect(controller.sender.state.lines).toEqual(['G0 X1', 'M2', PLANNER_WAIT]);
+    expect(programWrites(writes)).toEqual(['G0 X1\n', 'M2\n', PLANNER_DWELL]);
+    expect(controller.sender.state.hold).toBe(true);
 
     replyTo(controller, 'G0 X1');
+    replyTo(controller, 'M2');
     expect(controller.sender.state.finishTime).toBe(0);
 
-    replyTo(controller, 'M2');
+    replyTo(controller, 'G4 P0.5');
     expect(controller.sender.state.finishTime).toBeGreaterThan(0);
     expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
 
@@ -242,7 +252,7 @@ describe('Grbl sender tail', () => {
     expect(controller.sender.state.received).toBe(1);
   });
 
-  test('compensation keeps M5 and M30 and the sender does not append a planner wait', () => {
+  test('compensation keeps M5 and M30 and the load appends the planner wait', () => {
     const gcode = [
       'G21',
       'G90',
@@ -265,7 +275,6 @@ describe('Grbl sender tail', () => {
     const { controller } = createReadyController();
     loadProgram(controller, compensated);
 
-    expect(controller.sender.state.lines.slice(-3)).toEqual(['G17', 'M5', 'M30']);
-    expect(controller.sender.state.lines.some((line) => line.includes('%wait'))).toBe(false);
+    expect(controller.sender.state.lines.slice(-4)).toEqual(['G17', 'M5', 'M30', PLANNER_WAIT]);
   });
 });
