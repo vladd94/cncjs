@@ -195,6 +195,10 @@ class GrblController {
       // The fine G38.2 has been written and its ok has not arrived. The Z
       // offset lines wait for that ok so they cannot run during the probe.
       fineCommandOpen: false,
+
+      // Work Z of the successful coarse contact at this grid point.
+      // Probe Surface sizes the fine G38.2 from this, not from Start Z.
+      coarseTriggerZ: null,
     };
 
     // Feeder
@@ -870,6 +874,8 @@ class GrblController {
               ? '[probe:z] Probe contact failed; Z was not changed'
               : '[autolevel] Probe contact failed; the point was not saved');
           } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_COARSE) {
+            const reportedWorkZ = ensureFiniteNumber(value.z) - Number(wco.z);
+            this.probeState.coarseTriggerZ = this.reportedZToProgramZ(reportedWorkZ);
             this.probeState.probePhase = autolevel.PROBE_PHASE_FINE;
             log.debug('[autolevel] Coarse contact ignored');
           } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_FINE && this.probeState.touchZero) {
@@ -1899,6 +1905,7 @@ class GrblController {
               finalRetract,
             },
             fineCommandOpen: false,
+            coarseTriggerZ: null,
           };
 
           // G10 / G43.1 are not in this list. They are queued only after the
@@ -2177,6 +2184,7 @@ class GrblController {
             distanceModeRestorePending: false,
             touchZero: null,
             fineCommandOpen: false,
+            coarseTriggerZ: null,
           };
           autolevel.assignProbeHeight(
             this.probeState,
@@ -2227,6 +2235,7 @@ class GrblController {
             distanceModeRestorePending: false,
             touchZero: null,
             fineCommandOpen: false,
+            coarseTriggerZ: null,
           };
           log.info('[autolevel:stop] Probe stopped and state cleared');
         },
@@ -2348,13 +2357,21 @@ class GrblController {
     }
 
     queueFineProbe() {
-      const liftedZ = this.reportedZToProgramZ(_.get(this.runner.state, 'status.wpos.z'));
       const { endZ, fineFeedrate, clearanceZ, probeRetract } = this.probeState.config || {};
-      const target = autolevel.fineProbeTargetZ(
-        liftedZ,
-        autolevel.fineProbeTravel(probeRetract),
-        endZ
-      );
+      // Touch-plate keeps the 1.5x search from the lifted report. Probe
+      // Surface uses the coarse PRB for this point, then a longer window.
+      let liftedZ;
+      let travel;
+      if (this.probeState.touchZero) {
+        liftedZ = this.reportedZToProgramZ(_.get(this.runner.state, 'status.wpos.z'));
+        travel = autolevel.fineProbeTravel(probeRetract);
+      } else {
+        const retract = Number(probeRetract);
+        const imperial = this.runner.getModalGroup().units === 'G20';
+        liftedZ = Number(this.probeState.coarseTriggerZ) + retract;
+        travel = autolevel.surfaceFineProbeTravel(retract, imperial);
+      }
+      const target = autolevel.fineProbeTargetZ(liftedZ, travel, endZ);
       if (target === null) {
         this.abortSurfaceProbe(this.probeState.touchZero
           ? '[probe:z] Fine probe target is not usable; Z was not changed'
@@ -2460,6 +2477,7 @@ class GrblController {
       this.probeState.probeReleaseClosedOnce = false;
       this.probeState.touchZero = null;
       this.probeState.fineCommandOpen = false;
+      this.probeState.coarseTriggerZ = null;
       this.feeder.clear();
       this.feeder.unhold();
       log.warn(reason);

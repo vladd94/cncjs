@@ -914,6 +914,7 @@ describe('GrblController', () => {
         distanceModeRestorePending: false,
         touchZero: null,
         fineCommandOpen: false,
+        coarseTriggerZ: null,
       });
     });
 
@@ -1084,11 +1085,12 @@ describe('GrblController', () => {
       const { controller, writes } = setup();
       controller.command('autolevel:start', pointParams());
       reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
       controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
 
       const lines = writes.map(write => write.data);
       const coarse = lines.indexOf('G38.2 Z-2 F150\n');
-      const fine = lines.indexOf('G38.2 Z0.5 F30\n');
+      const fine = lines.indexOf('G38.2 Z-1 F30\n');
       const absolute = lines.indexOf('G90\n', lines.indexOf('G91\n'));
       expect(coarse).toBeGreaterThan(-1);
       expect(absolute).toBeGreaterThan(lines.indexOf('G91\n'));
@@ -1232,6 +1234,7 @@ describe('GrblController', () => {
         distanceModeRestorePending: false,
         touchZero: null,
         fineCommandOpen: false,
+        coarseTriggerZ: null,
       });
 
       emitPrb(controller, -0.25);
@@ -1261,17 +1264,36 @@ describe('GrblController', () => {
       const { controller, writes } = setup();
       controller.command('autolevel:start', pointParams({ probeRetract: 1 }));
       reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
       controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
 
       const lines = writes.map(write => write.data);
       const lift = lines.indexOf('G91\n');
       expect(lines[lift + 1]).toBe('G0 Z1\n');
       expect(lines[lift + 3]).toBe('G90\n');
-      expect(lines).toContain('G38.2 Z0.5 F30\n');
-      expect(lines.indexOf('G90\n', lift)).toBeLessThan(lines.indexOf('G38.2 Z0.5 F30\n'));
+      // Coarse contact Z0, retract 1: search 2 mm, target Z-1. The Idle
+      // report at Z2 must not be used.
+      expect(lines).toContain('G38.2 Z-1 F30\n');
+      expect(lines).not.toContain('G38.2 Z0.5 F30\n');
+      expect(lines.indexOf('G90\n', lift)).toBeLessThan(lines.indexOf('G38.2 Z-1 F30\n'));
       expect(fineTravel(1)).toBe(1.5);
       expect(fineTravel(1)).toBeLessThan(1 - (-2));
       expect(controller.runner.getModalGroup().distance).toBe('G90');
+    });
+
+    test('the fine target is clamped to the original coarse end Z', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams({
+        probeRetract: 1,
+        startZ: 2,
+        endZ: -0.5,
+      }));
+      reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
+      controller.runner.parse('<Idle|MPos:0.000,0.000,1.000|FS:0,0>');
+
+      expect(writes.map(write => write.data)).toContain('G38.2 Z-0.5 F30\n');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1 F30\n');
     });
 
     test('a probe pin that stays closed after retract is not a fine measurement', () => {
@@ -1290,7 +1312,7 @@ describe('GrblController', () => {
       expect(controller.probeState.awaitingProbeRelease).toBe(false);
       expect(controller.probeState.distanceModeRestorePending).toBe(false);
       expect(controller.runner.getModalGroup().distance).toBe('G90');
-      expect(writes.map(write => write.data)).not.toContain('G38.2 Z0.5 F30\n');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1.4 F30\n');
 
       const g91 = writes.map(write => write.data).indexOf('G91\n');
       const g90 = writes.map(write => write.data).indexOf('G90\n', g91);
@@ -1308,13 +1330,14 @@ describe('GrblController', () => {
       const { controller, writes } = setup();
       controller.command('autolevel:start', pointParams());
       reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
 
       controller.runner.parse('<Run|MPos:0.000,0.000,2.000|FS:100,0|Pn:P>');
-      expect(writes.map(write => write.data)).not.toContain('G38.2 Z0.5 F30\n');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1 F30\n');
 
       controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
       const lines = writes.map(write => write.data);
-      const fine = lines.indexOf('G38.2 Z0.5 F30\n');
+      const fine = lines.indexOf('G38.2 Z-1 F30\n');
       expect(fine).toBeGreaterThan(lines.indexOf('G90\n', lines.indexOf('G91\n')));
 
       stepFeeder(controller);
@@ -1348,7 +1371,7 @@ describe('GrblController', () => {
       controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
 
       const lines = writes.map(write => write.data);
-      const fine = lines.indexOf('G38.2 Z0.5 F30\n');
+      const fine = lines.indexOf('G38.2 Z-1.4 F30\n');
       expect(fine).toBeGreaterThan(lines.indexOf('G90\n', lines.indexOf('G91\n')));
       expect(controller.runner.getModalGroup().distance).toBe('G90');
 

@@ -49,10 +49,13 @@ export {
 export const PROBE_PHASE_COARSE = 'coarse';
 export const PROBE_PHASE_FINE = 'fine';
 
-// Grbl's homing locate pass travels 1.5x the pull-off, crossing the switch
-// by half that distance. The same scalar is the fine-probe margin, in the
-// units of probeRetract, so millimetres and inches stay consistent.
+// Ordinary Z touch-plate locate pass: 1.5x the pull-off. Probe Surface does
+// not use this scalar; see surfaceFineProbeTravel.
 export const FINE_PROBE_SEARCH_SCALAR = 1.5;
+
+// Extra travel below the coarse contact, in millimetres. Converted to the
+// program units of probeRetract so a G20 cycle covers the same distance.
+export const SURFACE_FINE_MARGIN_MM = 1;
 
 export const fineProbeTravel = (probeRetract) => {
   const retract = Number(probeRetract);
@@ -60,6 +63,18 @@ export const fineProbeTravel = (probeRetract) => {
     return 0;
   }
   return Math.round(retract * FINE_PROBE_SEARCH_SCALAR * 10000) / 10000;
+};
+
+// Probe Surface fine search. At least 2x the retract, and at least one
+// millimetre past the coarse contact (retract + 1 mm).
+export const surfaceFineProbeTravel = (probeRetract, imperial = false) => {
+  const retract = Number(probeRetract);
+  if (!(retract > 0)) {
+    return 0;
+  }
+  const margin = imperial ? mm2in(SURFACE_FINE_MARGIN_MM) : SURFACE_FINE_MARGIN_MM;
+  const travel = Math.max(retract * 2, retract + margin);
+  return Math.round(travel * 10000) / 10000;
 };
 
 // The fine search has to pass the contact and stay shorter than the coarse
