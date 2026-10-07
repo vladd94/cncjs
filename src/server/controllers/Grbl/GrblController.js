@@ -64,6 +64,8 @@ const noop = _.noop;
 // Controller-only marker. The feeder holds here and checks the probe pin
 // after the retract has finished, before the fine G38.2 is sent.
 const PROBE_RELEASE_CHECK = '%probe-release';
+// Log only the end of a program. A full holes file would flood the Pi console.
+const SENDER_TRACE_TAIL = 10;
 
 class GrblController {
     type = GRBL;
@@ -140,6 +142,11 @@ class GrblController {
       statusReportAtFinish: 0
     };
 
+    // Tail diagnostics. Identical completion ticks are not repeated.
+    senderTraceTail = false;
+
+    senderTraceDecision = '';
+
     // Message Slot
     messageSlot = null;
 
@@ -175,6 +182,14 @@ class GrblController {
       // G91 was sent and G90 has not been acknowledged yet. Restored on the
       // next Idle after an alarm, or by reset, never by motion during Alarm.
       distanceModeRestorePending: false,
+
+      // Ordinary Z touch-plate cycle. Set only after the fine contact.
+      // Null for Probe Surface, which must not touch the work offset.
+      touchZero: null,
+
+      // The fine G38.2 has been written and its ok has not arrived. The Z
+      // offset lines wait for that ok so they cannot run during the probe.
+      fineCommandOpen: false,
     };
 
     // Feeder
@@ -530,15 +545,26 @@ class GrblController {
           return;
         }
 
+        this.traceSenderLine(line);
         this.connection.write(line + '\n');
         log.silly(`> ${line}`);
       });
-      this.sender.on('hold', noop);
-      this.sender.on('unhold', noop);
+      this.sender.on('hold', () => {
+        const { sent, received, total } = this.sender.state;
+        this.traceSender(`HOLD sent=${sent} received=${received} total=${total} hold=${this.senderHoldLabel()} workflow=${this.workflow.state}`);
+      });
+      this.sender.on('unhold', () => {
+        const { sent, received, total } = this.sender.state;
+        this.traceSender(`UNHOLD sent=${sent} received=${received} total=${total} workflow=${this.workflow.state}`);
+      });
       this.sender.on('start', (startTime) => {
         this.actionTime.senderFinishTime = 0;
+        this.senderTraceTail = false;
+        this.senderTraceDecision = '';
       });
       this.sender.on('end', (finishTime) => {
+        const { sent, received, total } = this.sender.state;
+        this.traceSender(`SENDER END sent=${sent} received=${received} total=${total} hold=${this.senderHoldLabel()} finishTime=${finishTime} workflow=${this.workflow.state}`);
         this.actionTime.senderFinishTime = finishTime;
         this.actionTime.statusReportAtFinish = this.actionTime.statusReportSequence;
       });
@@ -654,6 +680,7 @@ class GrblController {
           }
           this.sender.ack();
           this.sender.next();
+          this.traceSenderAck();
           return;
         }
 
@@ -666,10 +693,16 @@ class GrblController {
           }
           this.sender.ack();
           this.sender.next();
+          this.traceSenderAck();
           return;
         }
 
         this.emit('serialport:read', res.raw);
+
+        // The fine probe's ok is the gate for a touch-plate Z offset.
+        if (this.probeState.fineCommandOpen) {
+          this.probeState.fineCommandOpen = false;
+        }
 
         // Feeder
         this.feeder.next();
@@ -711,6 +744,7 @@ class GrblController {
 
           this.sender.ack();
           this.sender.next();
+          this.traceSenderAck();
 
           return;
         }
@@ -721,6 +755,17 @@ class GrblController {
         } else {
           // Grbl v0.9
           this.emit('serialport:read', res.raw);
+        }
+
+        // A failed probe must not advance to the next queued line. G10 and
+        // G43.1 are not queued until the fine contact succeeds, and any
+        // lines already queued (the retract, or a late offset) are dropped.
+        if (this.probeState.probePhase || this.probeState.awaitingProbeRelease || this.probeState.touchZero) {
+          const touchZero = this.probeState.touchZero;
+          this.abortSurfaceProbe(touchZero
+            ? '[probe:z] Probe command failed; Z was not changed'
+            : '[autolevel] Probe command failed; the point was not saved');
+          return;
         }
 
         // Feeder
@@ -744,7 +789,10 @@ class GrblController {
           probePhase === autolevel.PROBE_PHASE_FINE ||
           this.probeState.awaitingProbeRelease;
         if (probeActive) {
-          this.abortSurfaceProbe('[autolevel] Probe alarm; the point was not saved');
+          const touchZero = this.probeState.touchZero;
+          this.abortSurfaceProbe(touchZero
+            ? '[probe:z] Probe alarm; Z was not changed'
+            : '[autolevel] Probe alarm; the point was not saved');
         }
       });
 
@@ -803,10 +851,15 @@ class GrblController {
           if (probeActive && value.result !== 1) {
             // Failed coarse or fine contact. Do not store the locating touch,
             // and do not send the rest of the probe program.
-            this.abortSurfaceProbe('[autolevel] Probe contact failed; the point was not saved');
+            const touchZero = this.probeState.touchZero;
+            this.abortSurfaceProbe(touchZero
+              ? '[probe:z] Probe contact failed; Z was not changed'
+              : '[autolevel] Probe contact failed; the point was not saved');
           } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_COARSE) {
             this.probeState.probePhase = autolevel.PROBE_PHASE_FINE;
             log.debug('[autolevel] Coarse contact ignored');
+          } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_FINE && this.probeState.touchZero) {
+            this.queueTouchZero(value, wco);
           } else if (value.result === 1 && probePhase === autolevel.PROBE_PHASE_FINE) {
             // $13=1 means Grbl reports positions in inches (including PRB)
             // PRB units follow $13 (firmware setting), NOT G20/G21 modal state
@@ -972,24 +1025,25 @@ class GrblController {
           return;
         }
 
-        const now = new Date().getTime();
-
         // Do not force query parser state ($G) when running a G-code program,
         // it will consume 3 bytes from the receive buffer in each time period.
         // @see https://github.com/cncjs/cncjs/issues/176
         // @see https://github.com/cncjs/cncjs/issues/186
-        if ((this.workflow.state === WORKFLOW_STATE_IDLE) && this.runner.isIdle()) {
-          const lastQueryTime = this.actionTime.queryParserState;
-          if (lastQueryTime > 0) {
-            const timespan = Math.abs(now - lastQueryTime);
-            const toleranceTime = 10000; // 10 seconds
+        if ((this.workflow.state !== WORKFLOW_STATE_IDLE) || !this.runner.isIdle()) {
+          return;
+        }
 
-            // Check if it has not been updated for a long time
-            if (timespan >= toleranceTime) {
-              log.debug(`Continue parser state query: timespan=${timespan}ms`);
-              this.actionMask.queryParserState.state = false;
-              this.actionMask.queryParserState.reply = false;
-            }
+        const now = new Date().getTime();
+        const lastQueryTime = this.actionTime.queryParserState;
+        if (lastQueryTime > 0) {
+          const timespan = Math.abs(now - lastQueryTime);
+          const toleranceTime = 10000; // 10 seconds
+
+          // Check if it has not been updated for a long time
+          if (timespan >= toleranceTime) {
+            log.debug(`Continue parser state query: timespan=${timespan}ms`);
+            this.actionMask.queryParserState.state = false;
+            this.actionMask.queryParserState.reply = false;
           }
         }
 
@@ -1059,6 +1113,21 @@ class GrblController {
           const now = new Date().getTime();
           const timespan = Math.abs(now - this.actionTime.senderFinishTime);
           const toleranceTime = 500; // in milliseconds
+          const activeState = _.get(this.runner.state, 'status.activeState', '');
+          const willStop = machineIdle && (timespan > toleranceTime);
+          const decision = [
+            `statusReportSequence=${this.actionTime.statusReportSequence}`,
+            `statusReportAtFinish=${this.actionTime.statusReportAtFinish}`,
+            `activeState=${activeState || '-'}`,
+            `isIdle=${this.runner.isIdle()}`,
+            `senderFinishTime=${this.actionTime.senderFinishTime}`,
+            `workflow=${this.workflow.state}`,
+            `gcodeStop=${willStop}`,
+          ].join(' ');
+          if (decision !== this.senderTraceDecision) {
+            this.senderTraceDecision = decision;
+            this.traceSender(`COMPLETE ${decision}`);
+          }
 
           if (!machineIdle) {
             // Extend the sender finish time
@@ -1436,12 +1505,10 @@ class GrblController {
             context = {};
           }
 
-          // G4 P0 or P with a very small value will empty the planner queue and then
-          // respond with an ok when the dwell is complete. At that instant, there will
-          // be no queued motions, as long as no more commands were sent after the G4.
-          // This is the fastest way to do it without having to check the status reports.
-          const dwell = '%wait ; Wait for the planner to empty';
-          const ok = this.sender.load(name, gcode + '\n' + dwell, context);
+          // Motion can still be running when the last line is acknowledged.
+          // Completion waits for a status report that arrives after Sender end
+          // and stays Idle, so the load does not append a synthetic dwell.
+          const ok = this.sender.load(name, gcode, context);
           if (!ok) {
             callback(new Error(`Invalid G-code: name=${name}`));
             return;
@@ -1526,6 +1593,8 @@ class GrblController {
         'gcode:resume': () => {
           this.event.trigger('gcode:resume');
 
+          const { sent, received, total, finishTime } = this.sender.state;
+          this.traceSender(`RESUME hold=${this.senderHoldLabel()} sent=${sent} received=${received} total=${total} finishTime=${finishTime} workflow=${this.workflow.state}`);
           this.write('~');
           this.workflow.resume();
         },
@@ -1552,6 +1621,9 @@ class GrblController {
         'cyclestart': () => {
           this.event.trigger('cyclestart');
 
+          const { sent, received, total, finishTime } = this.sender.state;
+          const activeState = _.get(this.runner.state, 'status.activeState', '');
+          this.traceSender(`CYCLESTART hold=${this.senderHoldLabel()} sent=${sent} received=${received} total=${total} finishTime=${finishTime} workflow=${this.workflow.state} activeState=${activeState || '-'}`);
           this.write('~');
         },
         'statusreport': () => {
@@ -1665,6 +1737,104 @@ class GrblController {
             'M5S0'
           ];
           this.command('gcode', commands);
+        },
+        'probe:z': () => {
+          const [params = {}] = args;
+          const depth = Number(params.probeDepth);
+          const feedrate = Number(params.probeFeedrate);
+          const fineFeedrate = Number(params.fineFeedrate);
+          const probeRetract = Number(params.probeRetract);
+          const touchPlateHeight = Number(params.touchPlateHeight);
+          const finalRetract = Number(params.retractionDistance);
+          const useTLO = params.useTLO === true;
+
+          const refuse = (reason) => {
+            log.warn(reason);
+            this.emit('serialport:read', reason);
+          };
+
+          if (this.probeState.probePhase || this.probeState.awaitingProbeRelease || this.probeState.touchZero) {
+            refuse('[probe:z] A probe is already running');
+            return;
+          }
+          if (!(depth > 0) || !(feedrate > 0) || !(fineFeedrate > 0)) {
+            refuse('[probe:z] Probe depth and feeds must be greater than zero');
+            return;
+          }
+          if (!Number.isFinite(touchPlateHeight) || !Number.isFinite(finalRetract) || finalRetract < 0) {
+            refuse('[probe:z] Touch plate height or final retract is not usable');
+            return;
+          }
+          if (!autolevel.isUsableProbeRetract(probeRetract, 0, -depth)) {
+            refuse('[probe:z] Probe retract is not usable for this probe depth');
+            return;
+          }
+
+          const pinState = String(_.get(this.runner.state, 'status.pinState', ''));
+          if (pinState.indexOf('P') !== -1) {
+            refuse('[probe:z] Probe pin is already active; Z was not changed');
+            return;
+          }
+
+          const wcs = this.runner.getWorkCoordinateSystem();
+          const wcsP = {
+            G54: 1,
+            G55: 2,
+            G56: 3,
+            G57: 4,
+            G58: 5,
+            G59: 6,
+          }[wcs] || 0;
+          if (!useTLO && !wcsP) {
+            refuse('[probe:z] Active work coordinate system is not usable');
+            return;
+          }
+
+          const currentZ = this.reportedZToProgramZ(_.get(this.runner.getWorkPosition(), 'z'));
+          const endZ = Number.isFinite(currentZ)
+            ? Math.round((currentZ - depth) * 10000) / 10000
+            : -1e9;
+
+          this.probeState = {
+            probedPositions: [],
+            probePoints: [],
+            minZ: null,
+            maxZ: null,
+            config: {
+              endZ,
+              fineFeedrate,
+              probeRetract,
+              clearanceZ: null,
+            },
+            probePhase: autolevel.PROBE_PHASE_COARSE,
+            awaitingProbeRelease: false,
+            probeReleaseClosedOnce: false,
+            distanceModeRestorePending: false,
+            touchZero: {
+              useTLO,
+              wcsP,
+              touchPlateHeight,
+              finalRetract,
+            },
+            fineCommandOpen: false,
+          };
+
+          // G10 / G43.1 are not in this list. They are queued only after the
+          // fine G38.2 reports a successful contact.
+          const plunge = Math.round((-depth) * 10000) / 10000;
+          const lift = Math.round(probeRetract * 10000) / 10000;
+          const lines = [];
+          if (useTLO) {
+            lines.push('G49');
+          }
+          lines.push('G91');
+          lines.push(`G38.2 Z${plunge} F${feedrate}`);
+          lines.push('G91');
+          lines.push(`G0 Z${lift}`);
+          lines.push('G4 P0');
+          lines.push('G90');
+          lines.push(PROBE_RELEASE_CHECK);
+          this.command('gcode', lines);
         },
         'gcode': () => {
           const [commands, context] = args;
@@ -1923,6 +2093,8 @@ class GrblController {
             awaitingProbeRelease: false,
             probeReleaseClosedOnce: false,
             distanceModeRestorePending: false,
+            touchZero: null,
+            fineCommandOpen: false,
           };
           autolevel.assignProbeHeight(
             this.probeState,
@@ -1971,6 +2143,8 @@ class GrblController {
             awaitingProbeRelease: false,
             probeReleaseClosedOnce: false,
             distanceModeRestorePending: false,
+            touchZero: null,
+            fineCommandOpen: false,
           };
           log.info('[autolevel:stop] Probe stopped and state cleared');
         },
@@ -2080,7 +2254,9 @@ class GrblController {
           this.write('?');
           return;
         }
-        this.abortSurfaceProbe('[autolevel] Probe is still triggered after retract; the fine touch was not started');
+        this.abortSurfaceProbe(this.probeState.touchZero
+          ? '[probe:z] Probe is still triggered after retract; Z was not changed'
+          : '[autolevel] Probe is still triggered after retract; the fine touch was not started');
         return;
       }
 
@@ -2098,18 +2274,67 @@ class GrblController {
         endZ
       );
       if (target === null) {
-        this.abortSurfaceProbe('[autolevel] Fine probe target is not usable');
+        this.abortSurfaceProbe(this.probeState.touchZero
+          ? '[probe:z] Fine probe target is not usable; Z was not changed'
+          : '[autolevel] Fine probe target is not usable');
         return;
       }
 
-      const lines = [
-        `G38.2 Z${target} F${fineFeedrate}`,
-        `G0 Z${clearanceZ}`,
-      ];
+      // Probe Surface retracts to clearance after the fine touch. A touch
+      // plate must not move, or set Z, until that contact is confirmed.
+      const lines = [`G38.2 Z${target} F${fineFeedrate}`];
+      if (!this.probeState.touchZero) {
+        lines.push(`G0 Z${clearanceZ}`);
+      }
       this.feeder.state.queue = lines.map(command => ({ command, context: {} }))
         .concat(this.feeder.state.queue);
       this.feeder.unhold();
       this.feeder.next();
+      if (this.probeState.touchZero) {
+        this.probeState.fineCommandOpen = true;
+      }
+    }
+
+    queueTouchZero(value, wco) {
+      const touch = this.probeState.touchZero;
+      if (!touch) {
+        return;
+      }
+
+      const reportedWorkZ = Number(value.z) - Number(wco.z);
+      const workZ = this.reportedZToProgramZ(reportedWorkZ);
+      if (workZ === null) {
+        this.abortSurfaceProbe('[probe:z] Fine contact position is not usable; Z was not changed');
+        return;
+      }
+
+      const plate = Math.round(Number(touch.touchPlateHeight) * 10000) / 10000;
+      const lines = [];
+      if (touch.useTLO) {
+        const tlo = Math.round((workZ - plate) * 10000) / 10000;
+        lines.push(`G43.1 Z${tlo}`);
+      } else {
+        lines.push(`G10 L20 P${touch.wcsP} Z${plate}`);
+      }
+
+      const retract = Number(touch.finalRetract);
+      if (retract > 0) {
+        const parkZ = Math.round((plate + retract) * 10000) / 10000;
+        lines.push('G90');
+        lines.push(`G0 Z${parkZ}`);
+      }
+
+      this.probeState.probePhase = null;
+      this.probeState.touchZero = null;
+      this.markDistance('G90');
+      this.feeder.state.queue = lines.map(command => ({ command, context: {} }))
+        .concat(this.feeder.state.queue);
+      this.feeder.unhold();
+      // If the fine probe's ok has not arrived, that ok sends the offset.
+      // Sending it here would put G10 on the wire during the probe.
+      if (!this.probeState.fineCommandOpen) {
+        this.feeder.next();
+      }
     }
 
     reportedZToProgramZ(reportedZ) {
@@ -2151,9 +2376,46 @@ class GrblController {
       this.probeState.probePhase = null;
       this.probeState.awaitingProbeRelease = false;
       this.probeState.probeReleaseClosedOnce = false;
+      this.probeState.touchZero = null;
+      this.probeState.fineCommandOpen = false;
       this.feeder.clear();
       this.feeder.unhold();
       log.warn(reason);
+      if (String(reason).indexOf('[probe:z]') === 0) {
+        this.emit('serialport:read', reason);
+      }
+    }
+
+    senderHoldLabel() {
+      const { hold, holdReason } = this.sender.state;
+      const name = holdReason && (holdReason.data || holdReason.msg);
+      return name ? `${hold}/${name}` : String(hold);
+    }
+
+    traceSender(message) {
+      log.info(`[sender] ${message}`);
+      this.emit('serialport:read', `[sender] ${message}`);
+    }
+
+    traceSenderLine(line) {
+      const { sent, received, total, finishTime } = this.sender.state;
+      if (!(total > 0) || !(sent > total - SENDER_TRACE_TAIL)) {
+        return;
+      }
+      if (!this.senderTraceTail) {
+        this.senderTraceTail = true;
+        this.traceSender(`TAIL total=${total} sent=${sent} received=${received} hold=${this.senderHoldLabel()} finishTime=${finishTime} workflow=${this.workflow.state}`);
+      }
+      const sourceLine = this.sender.state.lines[sent - 1];
+      this.traceSender(`SEND ${sent}/${total}: ${line} source=${sourceLine}`);
+    }
+
+    traceSenderAck() {
+      const { sent, received, total } = this.sender.state;
+      if (!(total > 0) || !(sent > total - SENDER_TRACE_TAIL)) {
+        return;
+      }
+      this.traceSender(`ACK ${received}/${sent}/${total} hold=${this.senderHoldLabel()} workflow=${this.workflow.state}`);
     }
 
     write(data, context) {

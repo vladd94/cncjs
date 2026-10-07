@@ -417,7 +417,7 @@ describe('GrblController', () => {
   });
 
   describe('sender workflow', () => {
-    test('gcode:load loads the program with an appended dwell and reports the sender state', () => {
+    test('gcode:load loads the program without a synthetic planner wait', () => {
       const { controller, writes, socketEvents } = setup();
       const callback = jest.fn();
 
@@ -427,11 +427,12 @@ describe('GrblController', () => {
       expect(err).toBe(null);
       expect(json).toEqual(expect.objectContaining({
         name: 'test.gcode',
-        total: 4,
+        total: 3,
         sent: 0,
         received: 0,
       }));
-      expect(controller.sender.state.gcode).toBe(`${SHORT_PROGRAM}\n%wait ; Wait for the planner to empty`);
+      expect(controller.sender.state.gcode).toBe(SHORT_PROGRAM);
+      expect(controller.sender.state.lines).toEqual(['G0 X0', 'G0 Y0', 'M30']);
       expect(writes).toEqual([]);
       expect(socketEvents.some(({ event }) => event === 'gcode:load')).toBe(true);
     });
@@ -444,24 +445,21 @@ describe('GrblController', () => {
 
       const [err, json] = callback.mock.calls[0];
       expect(err).toBe(null);
-      expect(json).toEqual(expect.objectContaining({ name: 'test.gcode', total: 2 }));
+      expect(json).toEqual(expect.objectContaining({ name: 'test.gcode', total: 1 }));
     });
 
-    // The controller appends the %wait dwell before Sender.load validates its input,
-    // so empty and non-string programs are string-concatenated into a non-empty
-    // program instead of reaching the Invalid G-code error branch.
     test.each([
-      ['an empty program', '', 1],
-      ['a non-string program', 42, 2],
-    ])('gcode:load accepts %s because the appended dwell makes it non-empty', (name, gcode, total) => {
+      ['an empty program', ''],
+      ['a non-string program', 42],
+    ])('gcode:load rejects %s', (name, gcode) => {
       const { controller } = setup();
       const callback = jest.fn();
 
       controller.command('gcode:load', 'test.gcode', gcode, callback);
 
-      const [err, json] = callback.mock.calls[0];
-      expect(err).toBe(null);
-      expect(json).toEqual(expect.objectContaining({ name: 'test.gcode', total }));
+      const [err] = callback.mock.calls[0];
+      expect(err).toEqual(expect.any(Error));
+      expect(controller.sender.state.total).toBe(0);
     });
 
     test('gcode:unload stops the workflow and clears the sender', () => {
@@ -471,7 +469,7 @@ describe('GrblController', () => {
       controller.command('gcode:start');
       controller.command('gcode:unload');
 
-      expect(writes.map(write => write.data)).toEqual(['G0 X0\n', 'G0 Y0\n', 'M30\n', 'G4 P0.5\n']);
+      expect(writes.map(write => write.data)).toEqual(['G0 X0\n', 'G0 Y0\n', 'M30\n']);
       expect(controller.workflow.state).toBe(WORKFLOW_STATE_IDLE);
       expect(controller.sender.state.name).toBe('');
       expect(controller.sender.state.gcode).toBe('');
@@ -484,7 +482,7 @@ describe('GrblController', () => {
       controller.command('gcode:load', 'test.gcode', SHORT_PROGRAM);
       controller.command('gcode:start');
 
-      expect(writes.map(write => write.data)).toEqual(['G0 X0\n', 'G0 Y0\n', 'M30\n', 'G4 P0.5\n']);
+      expect(writes.map(write => write.data)).toEqual(['G0 X0\n', 'G0 Y0\n', 'M30\n']);
       expect(controller.workflow.state).toBe(WORKFLOW_STATE_RUNNING);
     });
 
@@ -909,6 +907,8 @@ describe('GrblController', () => {
         awaitingProbeRelease: false,
         probeReleaseClosedOnce: false,
         distanceModeRestorePending: false,
+        touchZero: null,
+        fineCommandOpen: false,
       });
     });
 
@@ -1225,6 +1225,8 @@ describe('GrblController', () => {
         awaitingProbeRelease: false,
         probeReleaseClosedOnce: false,
         distanceModeRestorePending: false,
+        touchZero: null,
+        fineCommandOpen: false,
       });
 
       emitPrb(controller, -0.25);
@@ -1455,7 +1457,7 @@ describe('GrblController', () => {
 
       const [err, json] = callback.mock.calls[0];
       expect(err).toBe(null);
-      expect(json).toEqual(expect.objectContaining({ name: 'Square', total: 2 }));
+      expect(json).toEqual(expect.objectContaining({ name: 'Square', total: 1 }));
       expect(writes).toEqual([]);
     });
 
@@ -1471,7 +1473,7 @@ describe('GrblController', () => {
       expect(readFileSpy).toHaveBeenCalledWith('part.nc', expect.any(Function));
       const [err, json] = callback.mock.calls[0];
       expect(err).toBe(null);
-      expect(json).toEqual(expect.objectContaining({ name: 'part.nc', total: 3 }));
+      expect(json).toEqual(expect.objectContaining({ name: 'part.nc', total: 2 }));
       expect(writes).toEqual([]);
     });
 
