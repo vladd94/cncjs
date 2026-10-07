@@ -1437,6 +1437,92 @@ describe('GrblController', () => {
       expect(controller.probeState.distanceModeRestorePending).toBe(false);
     });
 
+    test('an Idle report between G91 and the retract does not inject G90', () => {
+      const { controller, writes, socketEvents } = setup();
+      controller.ready = true;
+      controller.initialized = true;
+      controller.command('autolevel:start', pointParams({ probeRetract: 1 }));
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G38.2 Z-2 F150\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      emitPrb(controller, 0);
+      expect(controller.probeState.probePhase).toBe('fine');
+
+      guard = 0;
+      while (writes[writes.length - 1].data !== 'G91\n' && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      expect(writes[writes.length - 1].data).toBe('G91\n');
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      const sent = writes.length;
+      controller.runner.parse('<Idle|MPos:0.000,0.000,1.000|FS:0,0>');
+      expect(writes).toHaveLength(sent);
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      guard = 0;
+      while (writes[writes.length - 1].data !== 'G90\n' && guard < 10) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+
+      const lines = writes.map(write => write.data);
+      const g91 = lines.lastIndexOf('G91\n');
+      expect(lines.slice(g91, g91 + 4)).toEqual([
+        'G91\n',
+        'G0 Z1\n',
+        'G4 P0\n',
+        'G90\n',
+      ]);
+      const clientG90 = socketEvents.filter(({ event, args }) => (
+        event === 'serialport:write' &&
+        args[0] === 'G90\n' &&
+        args[1] && args[1].source === WRITE_SOURCE_CLIENT
+      ));
+      expect(clientG90).toEqual([]);
+    });
+
+    test('an alarm after G91 restores G90 once, after the probe state is cleared', () => {
+      const { controller, writes, socketEvents } = setup();
+      controller.command('autolevel:start', pointParams());
+      controller.ready = true;
+      controller.initialized = true;
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G91\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+      expect(controller.runner.getModalGroup().distance).toBe('G91');
+
+      const sent = writes.length;
+      controller.runner.parse('ALARM:4');
+      expect(writes).toHaveLength(sent);
+      expect(controller.probeState.probePhase).toBe(null);
+      expect(controller.probeState.awaitingProbeRelease).toBe(false);
+      expect(controller.probeState.touchZero).toBe(null);
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0>');
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0>');
+
+      const clientG90 = socketEvents.filter(({ event, args }) => (
+        event === 'serialport:write' &&
+        args[0] === 'G90\n' &&
+        args[1] && args[1].source === WRITE_SOURCE_CLIENT
+      ));
+      expect(clientG90).toHaveLength(1);
+      expect(writes[writes.length - 1].data).toBe('G90\n');
+      expect(writes.filter(write => write.data === 'G90\n')).toHaveLength(2);
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+    });
+
     test('zero and oversized retracts are rejected', () => {
       const zero = setup();
       zero.controller.command('autolevel:start', pointParams({ probeRetract: 0 }));

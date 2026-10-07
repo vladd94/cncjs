@@ -2456,7 +2456,16 @@ class GrblController {
       if (!this.probeState.distanceModeRestorePending || !this.runner.isIdle()) {
         return;
       }
-      if (this.probeState.awaitingProbeRelease) {
+      // A live probe owns G91/G90 itself. Grbl can report Idle in the gap
+      // after G91 and before the relative retract; injecting G90 there turns
+      // G0 Z<retract> into an absolute move. Recovery is only for a probe
+      // that was interrupted and then cleared.
+      const probePhase = this.probeState.probePhase;
+      const probeActive = probePhase === autolevel.PROBE_PHASE_COARSE ||
+        probePhase === autolevel.PROBE_PHASE_FINE ||
+        this.probeState.awaitingProbeRelease ||
+        !!this.probeState.touchZero;
+      if (probeActive) {
         return;
       }
       this.probeState.distanceModeRestorePending = false;
