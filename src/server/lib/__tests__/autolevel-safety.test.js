@@ -141,11 +141,37 @@ describe('probe file import', () => {
       probeHeightMm: loaded.probeHeightMm,
     }));
 
-    expect(text.startsWith('; cncjs-probe-surface-normalized\n; probe-height=1.653000\n; z-values=surface-relative-to-work-zero\n')).toBe(true);
+    expect(text.startsWith('; cncjs-probe-surface-normalized\n; probe-height=1.653000\n; z-values=deviation-from-first-probe\n')).toBe(true);
     expect(loaded.normalized).toBe(true);
     expect(loaded.probeHeightMm).toBeCloseTo(1.653, 6);
     expect(loaded.points).toEqual(points);
     expect(again.points).toEqual(points);
+  });
+
+  test('an older work-zero map is converted once and probe height is not subtracted again', () => {
+    const text = [
+      '; cncjs-probe-surface-normalized',
+      '; probe-height=9.000000',
+      '; z-values=surface-relative-to-work-zero',
+      '5 10 -5.719 0 0 0 0 0 0',
+      '40 10 -5.844 0 0 0 0 0 0',
+      '5 45 -6.103 0 0 0 0 0 0',
+      '40 45 -6.227 0 0 0 0 0 0',
+    ].join('\n');
+    const loaded = readProbeSurfaceFile(text);
+    const again = readProbeSurfaceFile(serializeProbeSurfaceFile(loaded.points, {
+      normalized: true,
+      probeHeightMm: loaded.probeHeightMm,
+      referenceX: loaded.referenceX,
+      referenceY: loaded.referenceY,
+      referenceSurfaceZ: loaded.referenceSurfaceZ,
+    }));
+
+    expect(loaded.probeHeightMm).toBeCloseTo(9, 6);
+    expect(loaded.referenceSurfaceZ).toBeCloseTo(-5.719, 6);
+    expect(loaded.points.map(point => Number(point.z.toFixed(3)))).toEqual([0, -0.125, -0.384, -0.508]);
+    expect(again.points.map(point => Number(point.z.toFixed(3)))).toEqual([0, -0.125, -0.384, -0.508]);
+    expect(again.referenceSurfaceZ).toBeCloseTo(-5.719, 6);
   });
 
   test('a file with no normalization marker stays a legacy raw map', () => {

@@ -169,12 +169,12 @@ describe('autolevel arc tessellation', () => {
     ));
     const crown = points.reduce((best, point) => (point.y > best.y ? point : best), points[0]);
 
-    // At X≈5 the stored surface is 0.607. Legacy compensation would subtract the
-    // 0.107 origin and leave about 0.200. Normalized compensation keeps 0.307.
-    expect(crown.z).toBeCloseTo(0.307, 1);
-    expect(crown.z).toBeGreaterThan(0.25);
+    // The uniform +0.107 is the first probe, so it is the reference and is not
+    // added again. At X≈5 the remaining tilt is +0.5, so Z-0.300 becomes ~0.200.
+    expect(crown.z).toBeCloseTo(0.200, 1);
+    expect(crown.z).toBeGreaterThan(0.15);
     points.forEach((point) => {
-      expect(point.z).toBeGreaterThan(-0.25);
+      expect(point.z).toBeGreaterThan(-0.5);
       expect(point.z).toBeLessThan(1.5);
     });
   });

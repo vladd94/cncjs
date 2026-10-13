@@ -34,8 +34,9 @@ const DEFAULT_GRID_STEP = 5;
 // Written as the first line of compensated output; refuse to apply again if present.
 export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 
-// Second header line. Legacy raw maps record the probe reading (mm) at the work
-// origin. Normalized maps already store surface Z, so this value is 0.
+// Second header line. The Z subtracted from the map before it is added to the
+// program: work-origin height for a legacy raw map, or the surface deviation
+// at the cutting Z0 for a normalized map.
 export const AUTOLEVEL_REFERENCE_PREFIX = 'cncjs-autolevel-reference-z=';
 
 export {
@@ -529,7 +530,8 @@ const buildSurface = (probedPositions) => {
  *
  * Legacy raw maps store the work-coordinate trigger height, so only the
  * difference from the work-origin reading is a surface error. Normalized maps
- * already store that error, and referenceProbeZ is 0:
+ * store deviation from the first probe point. referenceProbeZ is the map
+ * height at the cutting Z0, which is 0 when that Z0 is the first probe point:
  * correctedZ = commandedZ + surfaceZ - referenceProbeZ.
  *
  * @param {Point3} pt - Point in current units
@@ -556,6 +558,63 @@ const compensatePoint = (pt, surface, units = METRIC_UNITS, referenceProbeZ = 0)
     y: pt.y,
     z: units === IMPERIAL_UNITS ? mm2in(compensatedZ) : compensatedZ,
   };
+};
+
+const mapContains = (probedPositions, x, y) => {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const point of probedPositions) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+  return x >= minX - 0.001 && x <= maxX + 0.001 && y >= minY - 0.001 && y <= maxY + 0.001;
+};
+
+// Normalized maps are deviations from the first probe. Cutting Z0 at that
+// point uses the first height (0 after storage). A Z0 at another XY uses the
+// surface there. An unknown or off-map Z0 is refused instead of guessing.
+const resolveNormalizedReference = (probedPositions, surface, options) => {
+  const hasZeroX = options.zeroX !== undefined && options.zeroX !== null;
+  const hasZeroY = options.zeroY !== undefined && options.zeroY !== null;
+  if (hasZeroX || hasZeroY) {
+    const zeroX = Number(options.zeroX);
+    const zeroY = Number(options.zeroY);
+    if (!hasZeroX || !hasZeroY || !Number.isFinite(zeroX) || !Number.isFinite(zeroY)) {
+      throw new Error('Cutting Z0 location must include finite X and Y');
+    }
+    if (!mapContains(probedPositions, zeroX, zeroY)) {
+      throw new Error('Cutting Z0 is outside the probe map, so the surface height there is unknown');
+    }
+    const zeroZ = surface.zAt(zeroX, zeroY);
+    if (!Number.isFinite(zeroZ)) {
+      throw new Error('Cutting Z0 is outside the probe map, so the surface height there is unknown');
+    }
+    return zeroZ;
+  }
+
+  const hasRefX = options.referenceX !== undefined && options.referenceX !== null;
+  const hasRefY = options.referenceY !== undefined && options.referenceY !== null;
+  if (hasRefX || hasRefY) {
+    const referenceX = Number(options.referenceX);
+    const referenceY = Number(options.referenceY);
+    if (!hasRefX || !hasRefY || !Number.isFinite(referenceX) || !Number.isFinite(referenceY)) {
+      throw new Error('Probe reference location must include finite X and Y');
+    }
+    if (!mapContains(probedPositions, referenceX, referenceY)) {
+      throw new Error('Probe reference point is outside the probe map');
+    }
+    const referenceZ = surface.zAt(referenceX, referenceY);
+    if (!Number.isFinite(referenceZ)) {
+      throw new Error('Probe reference point is outside the probe map');
+    }
+    return referenceZ;
+  }
+
+  return probedPositions[0].z;
 };
 
 /**
@@ -646,10 +705,11 @@ export const createProbeXYPoints = (options) => {
  *
  * @param {string} gcodeStr - G-code string to compensate
  * @param {array} probeData - Array of probe data [{x, y, z, a, b, c, u, v, w}, ...] or [{x, y, z}, ...]
- * @param {{ referenceProbeZ?: number, normalized?: boolean }} [options]
+ * @param {{ referenceProbeZ?: number, normalized?: boolean, zeroX?: number, zeroY?: number, referenceX?: number, referenceY?: number }} [options]
  *   Legacy maps use the probe height at work X0 Y0 unless referenceProbeZ is set.
- *   normalized maps already store surface Z relative to work Z0, so the
- *   interpolated value is added and referenceProbeZ is ignored.
+ *   Normalized maps store deviation from the first probe point. The subtracted
+ *   reference is the map height at zeroX/zeroY when that cutting Z0 is known,
+ *   otherwise the stored reference point, otherwise the first probe point.
  * @returns {string} Compensated G-code string
  */
 export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) => {
@@ -680,15 +740,16 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
 
   const surface = buildSurface(probedPositions);
   const { stepX, stepY } = surface;
-  const normalized = ensurePlainObject(options).normalized === true;
-  // A normalized map is already surface Z. Do not subtract the origin or an
-  // explicit reference, or the probe height would be applied twice.
+  const probeOptions = ensurePlainObject(options);
+  const normalized = probeOptions.normalized === true;
+  // Normalized Z is a deviation from the first probe, after one probe-thickness
+  // subtraction. Do not also subtract the work origin or the absolute surface.
   const referenceProbeZ = normalized
-    ? 0
+    ? resolveNormalizedReference(probedPositions, surface, probeOptions)
     : resolveReferenceProbeZ(
       probedPositions,
       surface,
-      ensurePlainObject(options).referenceProbeZ
+      probeOptions.referenceProbeZ
     );
 
   log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points, ${normalized ? 'normalized surface' : `reference Z ${referenceProbeZ.toFixed(3)}mm`})...`);

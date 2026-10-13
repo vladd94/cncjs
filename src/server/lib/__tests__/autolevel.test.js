@@ -525,20 +525,28 @@ describe('autolevel', () => {
         .toBe('G1 X5.000 Y5.000 Z-3.200');
     });
 
-    test('adds a positive surface deviation and ignores any reference height', () => {
+    test('a uniform offset from the work Z used while probing is not a cutting offset', () => {
       const result = applyProbeCompensationRaw('G1 X5 Y5 Z-3.200', high, {
         normalized: true,
         referenceProbeZ: 1.653,
       });
 
-      expect(result.split('\n')[1]).toBe('; cncjs-autolevel-reference-z=0.000000');
-      expect(result).toMatch(/Z-3\.093/);
-      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', high)).toBe('G1 X5.000 Y5.000 Z-3.200');
+      expect(result.split('\n')[1]).toBe('; cncjs-autolevel-reference-z=0.107000');
+      expect(result).toMatch(/Z-3\.200/);
+      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', low, { normalized: true }))
+        .toMatch(/Z-3\.200/);
     });
 
-    test('adds a negative surface deviation', () => {
-      expect(applyProbeCompensation('G1 X5 Y5 Z-3.200', low, { normalized: true }))
-        .toBe('G1 X5.000 Y5.000 Z-3.353');
+    test('adds only the deviation from the first probe point', () => {
+      const tilted = [
+        { x: 0, y: 0, z: -5.719 },
+        { x: 10, y: 0, z: -5.844 },
+        { x: 0, y: 10, z: -5.719 },
+        { x: 10, y: 10, z: -5.844 },
+      ];
+
+      expect(applyProbeCompensation('G1 X10 Y0 Z-3.200', tilted, { normalized: true }))
+        .toBe('G1 X10.000 Y0.000 Z-3.325');
     });
 
     test('does not require the work origin once the map is normalized', () => {
@@ -546,7 +554,56 @@ describe('autolevel', () => {
 
       expect(() => applyProbeCompensation('G1 X25 Y25 Z-3.200', shifted)).toThrow(/work origin/);
       expect(applyProbeCompensation('G1 X25 Y25 Z-3.200', shifted, { normalized: true }))
-        .toMatch(/Z-3\.093/);
+        .toMatch(/Z-3\.200/);
+    });
+
+    test('uses the surface at a later cutting Z0 instead of the first probe point', () => {
+      const tilted = [
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: -0.2 },
+        { x: 0, y: 10, z: 0 },
+        { x: 10, y: 10, z: -0.2 },
+      ];
+
+      expect(applyProbeCompensation('G1 X0 Y0 Z-1', tilted, {
+        normalized: true,
+        zeroX: 10,
+        zeroY: 0,
+      })).toBe('G1 X0.000 Y0.000 Z-0.800');
+      expect(() => applyProbeCompensation('G1 X0 Y0 Z-1', tilted, {
+        normalized: true,
+        zeroX: 80,
+        zeroY: 0,
+      })).toThrow(/outside the probe map/);
+    });
+
+    test('does not plunge by the absolute surface Z measured before cutting Z0', () => {
+      const measured = [
+        { x: 5, y: 10, z: -5.719 },
+        { x: 40, y: 10, z: -5.844 },
+        { x: 5, y: 45, z: -6.103 },
+        { x: 40, y: 45, z: -6.227 },
+      ];
+      const result = applyProbeCompensationRaw([
+        'G90',
+        'G0 Z5',
+        'G0 X27.591 Y22.947 Z5',
+        'G1 F250 X27.591 Y22.947 Z-0.300',
+      ].join('\n'), measured, { normalized: true });
+      const lines = result.split('\n');
+
+      expect(lines[1]).toBe('; cncjs-autolevel-reference-z=-5.719000');
+      expect(result).toContain('G0 Z5');
+      const motionZ = lines.filter(line => /[XY]/.test(line)).map(line => Number(/Z(-?\d+\.\d+)/.exec(line)[1]));
+      expect(motionZ[0]).toBeGreaterThan(4);
+      expect(motionZ[0]).toBeLessThan(5);
+      expect(motionZ[1]).toBeGreaterThan(-1);
+      expect(motionZ[1]).toBeLessThan(0);
+      expect(result).not.toMatch(/Z-6/);
+      expect(() => applyProbeCompensation(result, measured, { normalized: true }))
+        .toThrow(/already autolevel-compensated/);
+      expect(() => applyProbeCompensation('G91\nG0 X0 Y0 Z5', measured, { normalized: true }))
+        .toThrow(/Unsupported/);
     });
   });
 });

@@ -774,11 +774,12 @@ describe('GrblController', () => {
       });
 
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: -1.5 },
-        { x: 10, y: 0, z: -1 },
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: 0.5 },
       ]);
-      expect(controller.probeState.minZ).toBe(-1.5);
-      expect(controller.probeState.maxZ).toBe(-1);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.5, 6);
+      expect(controller.probeState.minZ).toBe(0);
+      expect(controller.probeState.maxZ).toBe(0.5);
     });
 
     test('probe height is subtracted from each trigger before the point is stored', () => {
@@ -819,8 +820,9 @@ describe('GrblController', () => {
       emit(99);
       emit(1.500);
 
-      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0.107, 6);
-      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(-0.153, 6);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(0.107, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(-0.260, 6);
     });
 
     test('a trigger equal to the probe height is stored as surface zero', () => {
@@ -885,7 +887,8 @@ describe('GrblController', () => {
         value: { result: 1, x: '0.000', y: '0.000', z: '130.175' },
       });
 
-      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(3.175, 3);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(3.175, 3);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
     });
 
     test('autolevel:stop resets the controller and clears the probe state', () => {
@@ -915,6 +918,11 @@ describe('GrblController', () => {
         touchZero: null,
         fineCommandOpen: false,
         coarseTriggerZ: null,
+        referenceX: null,
+        referenceY: null,
+        referenceSurfaceZ: null,
+        cuttingZeroX: null,
+        cuttingZeroY: null,
       });
     });
 
@@ -1059,8 +1067,9 @@ describe('GrblController', () => {
       expect(controller.probeState.probePhase).toBe('fine');
 
       emitPrb(controller, -0.25);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: -1.75 },
+        { x: 0, y: 0, z: 0 },
       ]);
       expect(controller.probeState.probePhase).toBe(null);
     });
@@ -1078,7 +1087,7 @@ describe('GrblController', () => {
       emitPrb(controller, 2);
 
       expect(controller.probeState.probedPositions).toHaveLength(2);
-      expect(controller.probeState.probedPositions.map(point => point.z)).toEqual([-0.5, 0.5]);
+      expect(controller.probeState.probedPositions.map(point => point.z)).toEqual([0, 1]);
     });
 
     test('the coarse probe uses Probe Feed and the fine probe uses Fine Probe Feed', () => {
@@ -1120,7 +1129,8 @@ describe('GrblController', () => {
       expect(controller.probeState.probedPositions).toEqual([]);
 
       emitPrb(controller, 2);
-      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0.5, 6);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(0.5, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
     });
 
     test('a failed coarse probe does not run the fine probe or save a point', () => {
@@ -1210,7 +1220,8 @@ describe('GrblController', () => {
       emitPrb(controller, 0.15);
 
       expect(controller.probeState.probedPositions).toHaveLength(1);
-      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(2.54, 6);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(2.54, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
     });
 
     test('stopping mid-cycle clears the phase so the next run starts clean', () => {
@@ -1235,6 +1246,11 @@ describe('GrblController', () => {
         touchZero: null,
         fineCommandOpen: false,
         coarseTriggerZ: null,
+        referenceX: null,
+        referenceY: null,
+        referenceSurfaceZ: null,
+        cuttingZeroX: null,
+        cuttingZeroY: null,
       });
 
       emitPrb(controller, -0.25);
@@ -1244,8 +1260,9 @@ describe('GrblController', () => {
       expect(controller.probeState.probePhase).toBe('coarse');
       emitPrb(controller, -0.4);
       emitPrb(controller, -0.25);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: -1.75 },
+        { x: 0, y: 0, z: 0 },
       ]);
       expect(controller.probeState.probePhase).toBe(null);
     });

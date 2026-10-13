@@ -199,6 +199,17 @@ class GrblController {
       // Work Z of the successful coarse contact at this grid point.
       // Probe Surface sizes the fine G38.2 from this, not from Start Z.
       coarseTriggerZ: null,
+
+      // First fine contact, after one probe-thickness subtraction. Later
+      // points are stored as deviations from this. Surface probing does not
+      // change G54 or G92.
+      referenceX: null,
+      referenceY: null,
+      referenceSurfaceZ: null,
+
+      // XY, in mm, where a later touch-plate cycle set cutting Z0.
+      cuttingZeroX: null,
+      cuttingZeroY: null,
     };
 
     // Feeder
@@ -919,6 +930,14 @@ class GrblController {
               probedPos.x = isImperial ? in2mm(gridNode.x) : gridNode.x;
               probedPos.y = isImperial ? in2mm(gridNode.y) : gridNode.y;
               probedPos.z = autolevel.surfaceZFromTrigger(probedPos.z, this.probeState.probeHeightMm);
+              // The first fine contact is the reference. Work Z during probing
+              // is not the cutting Z0, so only the deviation is stored.
+              if (!Number.isFinite(this.probeState.referenceSurfaceZ)) {
+                this.probeState.referenceSurfaceZ = probedPos.z;
+                this.probeState.referenceX = probedPos.x;
+                this.probeState.referenceY = probedPos.y;
+              }
+              probedPos.z -= this.probeState.referenceSurfaceZ;
 
               const newProbedPositions = [...this.probeState.probedPositions, probedPos];
               const isCompleted = newProbedPositions.length >= this.probeState.probePoints.length;
@@ -1906,6 +1925,11 @@ class GrblController {
             },
             fineCommandOpen: false,
             coarseTriggerZ: null,
+            referenceX: null,
+            referenceY: null,
+            referenceSurfaceZ: null,
+            cuttingZeroX: null,
+            cuttingZeroY: null,
           };
 
           // G10 / G43.1 are not in this list. They are queued only after the
@@ -2185,6 +2209,11 @@ class GrblController {
             touchZero: null,
             fineCommandOpen: false,
             coarseTriggerZ: null,
+            referenceX: null,
+            referenceY: null,
+            referenceSurfaceZ: null,
+            cuttingZeroX: null,
+            cuttingZeroY: null,
           };
           autolevel.assignProbeHeight(
             this.probeState,
@@ -2236,6 +2265,11 @@ class GrblController {
             touchZero: null,
             fineCommandOpen: false,
             coarseTriggerZ: null,
+            referenceX: null,
+            referenceY: null,
+            referenceSurfaceZ: null,
+            cuttingZeroX: null,
+            cuttingZeroY: null,
           };
           log.info('[autolevel:stop] Probe stopped and state cleared');
         },
@@ -2257,6 +2291,9 @@ class GrblController {
             this.probeState.maxZ = surface.maxZ;
             this.probeState.normalized = surface.normalized;
             this.probeState.probeHeightMm = surface.probeHeightMm;
+            this.probeState.referenceX = surface.referenceX;
+            this.probeState.referenceY = surface.referenceY;
+            this.probeState.referenceSurfaceZ = surface.referenceSurfaceZ;
             this.probeState.probePhase = null;
             this.probeState.awaitingProbeRelease = false;
             this.probeState.probeReleaseClosedOnce = false;
@@ -2277,10 +2314,20 @@ class GrblController {
           const [filepath, callback] = args;
 
           try {
-            const { probedPositions, normalized, probeHeightMm } = this.probeState;
+            const {
+              probedPositions,
+              normalized,
+              probeHeightMm,
+              referenceX,
+              referenceY,
+              referenceSurfaceZ,
+            } = this.probeState;
             const data = autolevel.serializeProbeSurfaceFile(probedPositions, {
               normalized: normalized === true,
               probeHeightMm,
+              referenceX,
+              referenceY,
+              referenceSurfaceZ,
             });
 
             await fsp.writeFile(filepath, data, 'utf8');
@@ -2305,8 +2352,14 @@ class GrblController {
           } = params;
 
           try {
+            const zeroX = params.zeroX != null ? params.zeroX : this.probeState.cuttingZeroX;
+            const zeroY = params.zeroY != null ? params.zeroY : this.probeState.cuttingZeroY;
             const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData, {
               normalized: params.normalized === true,
+              zeroX,
+              zeroY,
+              referenceX: params.referenceX != null ? params.referenceX : this.probeState.referenceX,
+              referenceY: params.referenceY != null ? params.referenceY : this.probeState.referenceY,
             });
             if (typeof callback === 'function') {
               callback(null, { compensatedGcode });
@@ -2408,6 +2461,16 @@ class GrblController {
       }
 
       const plate = Math.round(Number(touch.touchPlateHeight) * 10000) / 10000;
+      let zeroX = this.reportedZToProgramZ(Number(value.x) - Number(wco.x));
+      let zeroY = this.reportedZToProgramZ(Number(value.y) - Number(wco.y));
+      if (this.runner.getModalGroup().units === 'G20') {
+        zeroX = Number.isFinite(zeroX) ? in2mm(zeroX) : zeroX;
+        zeroY = Number.isFinite(zeroY) ? in2mm(zeroY) : zeroY;
+      }
+      if (Number.isFinite(zeroX) && Number.isFinite(zeroY)) {
+        this.probeState.cuttingZeroX = zeroX;
+        this.probeState.cuttingZeroY = zeroY;
+      }
       const lines = [];
       if (touch.useTLO) {
         const tlo = Math.round((workZ - plate) * 10000) / 10000;
