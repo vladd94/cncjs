@@ -679,5 +679,6 @@
   "Slow feed for the second, precision touch. Only this touch is saved.": "Slow feed for the second, precision touch. Only this touch is saved.",
   "Probe Retract": "Probe Retract",
   "Lift after the first touch, before the precision probe.": "Lift after the first touch, before the precision probe.",
-  "Retract is too large for the probe travel": "Retract is too large for the probe travel"
+  "Retract is too large for the probe travel": "Retract is too large for the probe travel",
+  "Distances inward from the homed machine position, not from work X0 Y0.": "Distances inward from the homed machine position, not from work X0 Y0."
 }

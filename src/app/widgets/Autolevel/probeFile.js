@@ -1,4 +1,5 @@
 export {
+  homeRelativePoint,
   parseProbeFile,
   readProbeSurfaceFile,
   serializeProbeSurfaceFile,

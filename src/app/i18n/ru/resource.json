@@ -673,5 +673,14 @@
   "Slow feed for the second, precision touch. Only this touch is saved.": "",
   "Probe Retract": "",
   "Lift after the first touch, before the precision probe.": "",
-  "Retract is too large for the probe travel": ""
+  "Retract is too large for the probe travel": "",
+  "Tool length is set only after the slow touch": "",
+  "Work Z is set only after the slow touch": "",
+  "Coarse probe": "",
+  "Intermediate retract": "",
+  "Fine probe": "",
+  "short search": "",
+  "Touch plate": "",
+  "Final retract": "",
+  "Distances inward from the homed machine position, not from work X0 Y0.": ""
 }

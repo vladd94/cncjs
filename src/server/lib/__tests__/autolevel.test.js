@@ -414,7 +414,7 @@ describe('autolevel', () => {
         ];
         const gcode = 'G0 X0 Y0 Z0\nG1 X200 Y0 Z0';
 
-        expect(() => applyProbeCompensation(gcode, probeData)).toThrow(/running out of memory/);
+        expect(() => applyProbeCompensation(gcode, probeData)).toThrow(/outside the probe area/);
       });
 
       test('punches holes in the lattice, falling back to the plane fit', () => {

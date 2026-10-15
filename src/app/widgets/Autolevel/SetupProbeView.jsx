@@ -250,6 +250,9 @@ const SetupProbeView = ({ state, actions }) => {
       </div>
       <div className={styles.section}>
         <div className={styles.sectionTitle}>{i18n._('Probe Area')}</div>
+        <div style={{ color: '#666', marginBottom: 8 }}>
+          {i18n._('Distances inward from the homed machine position, not from work X0 Y0.')}
+        </div>
         <div style={{ textAlign: 'center', color: '#666' }}>
           {i18n._('{{count}} points', { count: totalPoints })}
         </div>

@@ -48,7 +48,7 @@ describe('program tail log', () => {
     }).not.toThrow();
   });
 
-  test('the machine log path is the Pi file', () => {
-    expect(PROGRAM_TAIL_LOG_PATH).toBe('/home/vlad/cncjs-program-tail.log');
+  test('the log path is the install directory', () => {
+    expect(PROGRAM_TAIL_LOG_PATH).toBe(path.resolve(__dirname, '../../../..', 'cncjs-program-tail.log'));
   });
 });

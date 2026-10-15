@@ -92,3 +92,17 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live as GitHub issues on `vladd94/cncjs`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five canonical labels, each string equal to its role: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.

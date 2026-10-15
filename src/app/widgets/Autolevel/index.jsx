@@ -55,7 +55,7 @@ import {
   PROCESSING_PHASE_LOADING,
 } from './constants';
 import styles from './index.styl';
-import { readProbeSurfaceFile, serializeProbeSurfaceFile } from './probeFile';
+import { homeRelativePoint, readProbeSurfaceFile, serializeProbeSurfaceFile } from './probeFile';
 
 class AutolevelWidget extends PureComponent {
   static propTypes = {
@@ -184,6 +184,8 @@ class AutolevelWidget extends PureComponent {
           probeMapNormalized: surface.normalized === true,
           probeMapLegacy: surface.normalized !== true,
           probeMapHeightMm: surface.probeHeightMm,
+          probeXyReference: surface.xyReference,
+          probeMachineReference: surface.machineReference,
           probeStats: {
             points: probedPositions.length,
             minZ,
@@ -196,13 +198,32 @@ class AutolevelWidget extends PureComponent {
         // 3D visualizer. The bounds are derived from the data itself (min/max
         // of loaded X/Y values). interactable:false because the user is in the
         // Apply view and should not be able to modify the probe area.
+        const displayPositions = surface.xyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, surface.machineReference))
+          : probedPositions;
+        let viewMinX = minX;
+        let viewMaxX = maxX;
+        let viewMinY = minY;
+        let viewMaxY = maxY;
+        if (surface.xyReference === 'machine') {
+          viewMinX = Infinity;
+          viewMaxX = -Infinity;
+          viewMinY = Infinity;
+          viewMaxY = -Infinity;
+          displayPositions.forEach(({ x, y }) => {
+            viewMinX = Math.min(x, viewMinX);
+            viewMaxX = Math.max(x, viewMaxX);
+            viewMinY = Math.min(y, viewMinY);
+            viewMaxY = Math.max(y, viewMaxY);
+          });
+        }
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: {
-            startX: minX,
-            startY: minY,
-            endX: maxX,
-            endY: maxY,
+            startX: viewMinX,
+            startY: viewMinY,
+            endX: viewMaxX,
+            endY: viewMaxY,
             units: this.state.units,
             snapX: this.state.stepX / 2,
             snapY: this.state.stepY / 2,
@@ -246,10 +267,13 @@ class AutolevelWidget extends PureComponent {
       // Entering the Apply view after a completed probe run — show the collected
       // probe points for reference. interactable:false because the probe area
       // should not be editable from the Apply view.
-      const { probedPositions, startX, startY, endX, endY, units, stepX, stepY } = this.state;
+      const { probedPositions, startX, startY, endX, endY, units, stepX, stepY, probeXyReference, probeMachineReference } = this.state;
       if (probedPositions.length > 0) {
+        const displayPositions = probeXyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, probeMachineReference))
+          : probedPositions;
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units, snapX: stepX / 2, snapY: stepY / 2, interactable: false },
         });
       }
@@ -432,6 +456,8 @@ class AutolevelWidget extends PureComponent {
       const data = serializeProbeSurfaceFile(probedPositions, {
         normalized: probeMapNormalized === true,
         probeHeightMm: probeMapHeightMm,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
       });
 
       const blob = new Blob([data], { type: 'text/plain' });
@@ -458,6 +484,8 @@ class AutolevelWidget extends PureComponent {
         gcode,
         probeData: probedPositions,
         normalized: this.state.probeMapNormalized === true,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
       })
         .then((res) => {
           const { compensatedGcode } = { ...res.body };
@@ -510,6 +538,8 @@ class AutolevelWidget extends PureComponent {
         gcode,
         probeData: probedPositions,
         normalized: this.state.probeMapNormalized === true,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
       })
         .then((res) => {
           const { compensatedGcode } = { ...res.body };
@@ -633,10 +663,14 @@ class AutolevelWidget extends PureComponent {
     },
     'autolevel:update': (data) => {
       log.debug('Received autolevel:update event', data);
-      const { current, total, probedPos, minZ, maxZ, maxDeviation } = data;
+      const { current, total, probedPos, minZ, maxZ, maxDeviation, xyReference, machineReference } = data;
 
       this.setState(state => {
         const updatedPositions = [...state.probedPositions, probedPos];
+        const reference = machineReference || state.probeMachineReference;
+        const displayPositions = (xyReference === 'machine' || state.probeXyReference === 'machine') && reference
+          ? updatedPositions.map(point => homeRelativePoint(point, reference))
+          : updatedPositions;
 
         // A new probe point was received from the controller (autolevel:update).
         // Incrementally update the 3D visualizer so the user can watch the
@@ -645,7 +679,7 @@ class AutolevelWidget extends PureComponent {
         const { startX, startY, endX, endY, units, stepX, stepY } = state;
         log.debug(`Updating visualization with point ${current}/${total}:`, probedPos);
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: updatedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units, snapX: stepX / 2, snapY: stepY / 2, interactable: false },
         });
 
@@ -662,6 +696,8 @@ class AutolevelWidget extends PureComponent {
             maxZ,
             maxDeviation,
           },
+          probeXyReference: xyReference || state.probeXyReference,
+          probeMachineReference: reference,
         };
       });
 
@@ -710,7 +746,7 @@ class AutolevelWidget extends PureComponent {
 
       const {
         probedPositions = [], probePoints = [], minZ, maxZ, config = {},
-        normalized, probeHeightMm,
+        normalized, probeHeightMm, xyReference, machineReference,
       } = result.state;
       log.debug('Probe state from server:', {
         probedPositions: probedPositions.length,
@@ -742,6 +778,8 @@ class AutolevelWidget extends PureComponent {
           probeMapNormalized: normalized === true,
           probeMapLegacy: normalized !== true,
           probeMapHeightMm: Number.isFinite(probeHeightMm) ? probeHeightMm : null,
+          probeXyReference: xyReference || 'work',
+          probeMachineReference: machineReference || null,
         });
 
         // Restore probe visualization after the widget reconnects to the server
@@ -751,8 +789,11 @@ class AutolevelWidget extends PureComponent {
         const { startX, startY, endX, endY } = config;
         if (startX !== undefined) {
           const interactable = wizardView === VIEW_SETUP_PROBE;
+          const displayPositions = xyReference === 'machine'
+            ? probedPositions.map(point => homeRelativePoint(point, machineReference))
+            : probedPositions;
           pubsub.publish('autolevel:showProbeVisualization', {
-            probeData: probedPositions,
+            probeData: displayPositions,
             config: { startX, startY, endX, endY, units: this.state.units, snapX: this.state.stepX / 2, snapY: this.state.stepY / 2, interactable },
           });
         }
@@ -779,6 +820,7 @@ class AutolevelWidget extends PureComponent {
   componentDidUpdate(prevProps, prevState) {
     const {
       minimized, units, wizardView, probedPositions,
+      probeXyReference, probeMachineReference,
       stepX, stepY,
       startX, startY, endX, endY,
       clearanceZ, startZ, endZ,
@@ -827,8 +869,11 @@ class AutolevelWidget extends PureComponent {
         // and resize the probe area directly in the viewport. On the Probing
         // view the overlay is read-only (probing is already in progress).
         const interactable = wizardView === VIEW_SETUP_PROBE;
+        const displayPositions = probeXyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, probeMachineReference))
+          : probedPositions;
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units: this.state.units, snapX: stepX / 2, snapY: stepY / 2, interactable },
         });
       }
@@ -872,6 +917,8 @@ class AutolevelWidget extends PureComponent {
       probeMapNormalized: false,
       probeMapLegacy: false,
       probeMapHeightMm: null,
+      probeXyReference: 'work',
+      probeMachineReference: null,
       // Probe state
       probeState: PROBE_STATE_IDLE,
       probeProgress: { current: 0, total: 0, percentage: 0 },

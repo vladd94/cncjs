@@ -11,6 +11,8 @@ import {
 } from '../../../app/widgets/Autolevel/probeFile';
 
 const surface = [
+  { x: 0, y: -10, z: 0 },
+  { x: 10, y: -10, z: 1 },
   { x: 0, y: 0, z: 0 },
   { x: 10, y: 0, z: 1 },
   { x: 0, y: 10, z: 0 },
@@ -102,13 +104,12 @@ describe('autolevel safety regressions', () => {
     expect(lines.join('\n')).toMatch(/X10\.000 Y0\.000 Z1\.000/);
   });
 
-  test('clamps out-of-map XY to the nearest edge height', () => {
+  test('rejects a cut outside the measured surface instead of clamping it', () => {
     const map = [
       { x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, { x: 20, y: 0, z: 1 },
       { x: 0, y: 10, z: 0 }, { x: 10, y: 10, z: 0 }, { x: 20, y: 10, z: 1 },
     ];
-    const result = applyProbeCompensation('G0 X50 Y0 Z0', map);
-    expect(result).toBe(`; ${AUTOLEVEL_APPLIED_MARKER}\n; ${AUTOLEVEL_REFERENCE_PREFIX}0.000000\nG0 X50.000 Y0.000 Z1.000`);
+    expect(() => applyProbeCompensation('G0 X50 Y0 Z0', map)).toThrow(/outside the probe area/);
   });
 
   test('refuses to apply compensation twice', () => {

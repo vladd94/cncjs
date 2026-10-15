@@ -120,7 +120,7 @@ const fineTravel = (retract) => Math.round(retract * 1.5 * 10000) / 10000;
 const doubleTouchLines = (x, y, feed, retract) => [
   'G90\n',
   'G0 Z5\n',
-  `G0 X${x} Y${y}\n`,
+  `G53 G0 X${x} Y${y}\n`,
   'G0 Z1\n',
   `G38.2 Z-1 F${feed}\n`,
   'G91\n',
@@ -130,11 +130,14 @@ const doubleTouchLines = (x, y, feed, retract) => [
   '?',
 ];
 
+// $23=3, $27=2.5, $130=$131=400 parks at MPos -397.5. Inward is positive.
+const HOMED_MPOS = -397.5;
+
 const AUTOLEVEL_GRID_WRITES = [
-  ...doubleTouchLines(0, 0, 100, 1),
-  ...doubleTouchLines(10, 0, 100, 1),
-  ...doubleTouchLines(0, 10, 100, 1),
-  ...doubleTouchLines(10, 10, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS, HOMED_MPOS, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS + 10, HOMED_MPOS, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS, HOMED_MPOS + 10, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS + 10, HOMED_MPOS + 10, 100, 1),
 ];
 
 const PROBE_FIXTURE = '0 0 -1.5 0 0 0 0 0 0\n10 0 -1 0 0 0 0 0 0\n';
@@ -177,6 +180,18 @@ const setup = (configValues = {}) => {
   });
   const { controller, writes } = createController(GrblController);
   clearInterval(controller.queryTimer);
+  controller.runner.settings.settings.$23 = '3';
+  controller.runner.settings.settings.$27 = '2.5';
+  controller.runner.settings.settings.$130 = '400';
+  controller.runner.settings.settings.$131 = '400';
+  controller.machineReference = {
+    homeX: HOMED_MPOS,
+    homeY: HOMED_MPOS,
+    homingMask: 3,
+    pulloff: 2.5,
+    travelX: 400,
+    travelY: 400,
+  };
   const socketEvents = [];
   controller.sockets.test = { emit: (event, ...args) => socketEvents.push({ event, args }) };
   activeControllers.push(controller);
@@ -740,10 +755,10 @@ describe('GrblController', () => {
 
       expect(writes.map(write => write.data)).toEqual(AUTOLEVEL_GRID_WRITES);
       expect(controller.probeState.probePoints).toEqual([
-        { x: 0, y: 0 },
-        { x: 10, y: 0 },
-        { x: 0, y: 10 },
-        { x: 10, y: 10 },
+        { x: HOMED_MPOS, y: HOMED_MPOS },
+        { x: HOMED_MPOS + 10, y: HOMED_MPOS },
+        { x: HOMED_MPOS, y: HOMED_MPOS + 10 },
+        { x: HOMED_MPOS + 10, y: HOMED_MPOS + 10 },
       ]);
       expect(controller.probeState.probedPositions).toEqual([]);
       expect(controller.probeState.minZ).toBe(null);
@@ -808,10 +823,13 @@ describe('GrblController', () => {
         wpos: { x: '0.000', y: '0.000', z: '0.000' },
       };
       const emit = (z) => {
+        const node = controller.probeState.probePoints[controller.probeState.probedPositions.length];
+        const x = Number(node.x).toFixed(3);
+        const y = Number(node.y).toFixed(3);
         controller.runner.emit('parameters', {
-          raw: `[PRB:0.000,0.000,${z}:1]`,
+          raw: `[PRB:${x},${y},${z}:1]`,
           name: 'PRB',
-          value: { result: 1, x: '0.000', y: '0.000', z: String(z) },
+          value: { result: 1, x, y, z: String(z) },
         });
       };
 
@@ -876,15 +894,18 @@ describe('GrblController', () => {
         mpos: { x: '0.000', y: '0.000', z: '0.000' },
         wpos: { x: '0.000', y: '0.000', z: '0.000' },
       };
+      const node = controller.probeState.probePoints[0];
+      const x = Number(node.x).toFixed(3);
+      const y = Number(node.y).toFixed(3);
       controller.runner.emit('parameters', {
-        raw: '[PRB:0.000,0.000,1.000:1]',
+        raw: `[PRB:${x},${y},1.000:1]`,
         name: 'PRB',
-        value: { result: 1, x: '0.000', y: '0.000', z: '1.000' },
+        value: { result: 1, x, y, z: '1.000' },
       });
       controller.runner.emit('parameters', {
-        raw: '[PRB:0.000,0.000,130.175:1]',
+        raw: `[PRB:${x},${y},130.175:1]`,
         name: 'PRB',
-        value: { result: 1, x: '0.000', y: '0.000', z: '130.175' },
+        value: { result: 1, x, y, z: '130.175' },
       });
 
       expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(3.175, 3);
@@ -923,6 +944,10 @@ describe('GrblController', () => {
         referenceSurfaceZ: null,
         cuttingZeroX: null,
         cuttingZeroY: null,
+        cuttingZeroMachineX: null,
+        cuttingZeroMachineY: null,
+        xyReference: null,
+        machineReference: null,
       });
     });
 
@@ -1042,14 +1067,19 @@ describe('GrblController', () => {
     });
 
     const emitPrb = (controller, z, result = 1) => {
+      const node = controller.probeState.probePoints[controller.probeState.probedPositions.length] || { x: 0, y: 0 };
+      const reportInches = controller.runner.settings?.settings?.$13 === '1';
+      const report = (mm) => (reportInches ? mm / 25.4 : mm);
+      const x = report(Number(node.x)).toFixed(4);
+      const y = report(Number(node.y)).toFixed(4);
       controller.runner.state.status = {
-        mpos: { x: '0.000', y: '0.000', z: '0.000' },
-        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+        mpos: { x, y, z: '0.000' },
+        wpos: { x, y, z: '0.000' },
       };
       controller.runner.emit('parameters', {
-        raw: `[PRB:0.000,0.000,${z}:${result}]`,
+        raw: `[PRB:${x},${y},${z}:${result}]`,
         name: 'PRB',
-        value: { result, x: '0.000', y: '0.000', z: String(z) },
+        value: { result, x, y, z: String(z) },
       });
     };
 
@@ -1069,7 +1099,7 @@ describe('GrblController', () => {
       emitPrb(controller, -0.25);
       expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: 0 },
+        { x: HOMED_MPOS, y: HOMED_MPOS, z: 0 },
       ]);
       expect(controller.probeState.probePhase).toBe(null);
     });
@@ -1251,6 +1281,10 @@ describe('GrblController', () => {
         referenceSurfaceZ: null,
         cuttingZeroX: null,
         cuttingZeroY: null,
+        cuttingZeroMachineX: null,
+        cuttingZeroMachineY: null,
+        xyReference: null,
+        machineReference: null,
       });
 
       emitPrb(controller, -0.25);
@@ -1262,7 +1296,7 @@ describe('GrblController', () => {
       emitPrb(controller, -0.25);
       expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: 0 },
+        { x: HOMED_MPOS, y: HOMED_MPOS, z: 0 },
       ]);
       expect(controller.probeState.probePhase).toBe(null);
     });

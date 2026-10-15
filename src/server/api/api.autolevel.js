@@ -1,4 +1,4 @@
-import { applyProbeCompensation } from '../lib/autolevel';
+import { applyProbeCompensation, machineReferencesMatch, XY_REFERENCE_MACHINE } from '../lib/autolevel';
 import store from '../store';
 import {
   ERR_BAD_REQUEST,
@@ -33,10 +33,38 @@ const cuttingZeroFromControllers = () => {
   return first;
 };
 
+const connectedControllers = () => {
+  const controllers = store.get('controllers', {});
+  return Object.keys(controllers).map(port => controllers[port]).filter(Boolean);
+};
+
+const liveMachineContext = () => {
+  const matches = connectedControllers().filter(controller => (
+    controller.currentMachineReference && controller.workOffsetMm
+  ));
+  if (matches.length === 0) {
+    return null;
+  }
+  if (matches.length > 1) {
+    throw new Error('Machine reference is ambiguous across connected controllers');
+  }
+  const controller = matches[0];
+  return {
+    machineReference: controller.currentMachineReference(),
+    wco: controller.workOffsetMm(),
+    wcs: controller.runner && controller.runner.getWorkCoordinateSystem
+      ? controller.runner.getWorkCoordinateSystem()
+      : 'G54',
+    cuttingZeroMachineX: controller.probeState && controller.probeState.cuttingZeroMachineX,
+    cuttingZeroMachineY: controller.probeState && controller.probeState.cuttingZeroMachineY,
+  };
+};
+
 // Apply probe compensation without requiring an open serial port.
 export const apply = (req, res) => {
   const {
     gcode = '', probeData = [], referenceProbeZ, normalized, zeroX, zeroY,
+    xyReference, machineReference,
   } = { ...req.body };
 
   if (!gcode) {
@@ -56,12 +84,31 @@ export const apply = (req, res) => {
       if (zeroX != null && zeroY != null) {
         options.zeroX = zeroX;
         options.zeroY = zeroY;
-      } else {
+      } else if (xyReference !== XY_REFERENCE_MACHINE) {
         const cuttingZero = cuttingZeroFromControllers();
         if (cuttingZero) {
           options.zeroX = cuttingZero.cuttingZeroX;
           options.zeroY = cuttingZero.cuttingZeroY;
         }
+      }
+    }
+    if (xyReference === XY_REFERENCE_MACHINE) {
+      const live = liveMachineContext();
+      if (!live || !live.machineReference || !Number.isFinite(live.wco.x) || !Number.isFinite(live.wco.y)) {
+        throw new Error('Home the machine and connect it before applying a machine-referenced probe map');
+      }
+      if (machineReference && !machineReferencesMatch(machineReference, live.machineReference)) {
+        throw new Error('Machine home or travel settings changed since this surface was probed. Probe the surface again.');
+      }
+      options.xyReference = XY_REFERENCE_MACHINE;
+      options.wcoX = live.wco.x;
+      options.wcoY = live.wco.y;
+      options.activeWcs = live.wcs;
+      options.machineReference = machineReference || live.machineReference;
+      options.liveMachineReference = live.machineReference;
+      if (options.zeroX == null && Number.isFinite(live.cuttingZeroMachineX) && Number.isFinite(live.cuttingZeroMachineY)) {
+        options.zeroX = live.cuttingZeroMachineX;
+        options.zeroY = live.cuttingZeroMachineY;
       }
     }
     const compensatedGcode = applyProbeCompensation(gcode, probeData, options);

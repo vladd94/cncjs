@@ -210,7 +210,20 @@ class GrblController {
       // XY, in mm, where a later touch-plate cycle set cutting Z0.
       cuttingZeroX: null,
       cuttingZeroY: null,
+      cuttingZeroMachineX: null,
+      cuttingZeroMachineY: null,
+
+      // 'machine' for a surface probed from home. Legacy files stay 'work'.
+      xyReference: null,
+      machineReference: null,
     };
+
+    // MPos in mm where the last successful homing cycle parked. Not derived
+    // from $130, because those travel settings may not match the machine.
+    machineReference = null;
+
+    // 'ok' until $H is acknowledged, then 'status' until Idle reports MPos.
+    homeCapture = null;
 
     // Feeder
     feeder = null;
@@ -656,6 +669,7 @@ class GrblController {
         this.actionMask.queryStatusReport = false;
         this.considerProbeRelease();
         this.restoreDistanceModeIfIdle();
+        this.captureHomeIfIdle();
 
         if (this.actionMask.replyStatusReport) {
           this.actionMask.replyStatusReport = false;
@@ -698,6 +712,9 @@ class GrblController {
           }
           this.actionMask.queryParserState.reply = false;
           return;
+        }
+        if (this.homeCapture === 'ok') {
+          this.homeCapture = 'status';
         }
 
         const { hold, sent, received } = this.sender.state;
@@ -813,6 +830,10 @@ class GrblController {
           this.emit('serialport:read', res.raw);
         }
 
+        if (this.homeCapture) {
+          this.homeCapture = null;
+          this.machineReference = null;
+        }
         const probePhase = this.probeState.probePhase;
         const probeActive = probePhase === autolevel.PROBE_PHASE_COARSE ||
           probePhase === autolevel.PROBE_PHASE_FINE ||
@@ -896,24 +917,25 @@ class GrblController {
             // PRB units follow $13 (firmware setting), NOT G20/G21 modal state
             const reportInches = this.runner.settings?.settings?.$13 === '1';
 
-            // Convert probe result to work coordinates, then to mm
-            // Probe data is always stored in mm for consistent compensation math
-            const probedPos = {
-              x: ensureFiniteNumber(value.x) - Number(wco.x),
-              y: ensureFiniteNumber(value.y) - Number(wco.y),
-              z: ensureFiniteNumber(value.z) - Number(wco.z),
-            };
+            // PRB is a machine position. XY is stored as the commanded machine
+            // grid point after the contact is checked against that point. Z stays
+            // a work-coordinate surface height.
+            let machineX = ensureFiniteNumber(value.x);
+            let machineY = ensureFiniteNumber(value.y);
+            let workZ = ensureFiniteNumber(value.z) - Number(wco.z);
             if (reportInches) {
-              probedPos.x = in2mm(probedPos.x);
-              probedPos.y = in2mm(probedPos.y);
-              probedPos.z = in2mm(probedPos.z);
+              machineX = in2mm(machineX);
+              machineY = in2mm(machineY);
+              workZ = in2mm(workZ);
             }
 
             // Track probe data if probing is active
             log.debug('[autolevel] Checking probe state:', {
               probePoints: this.probeState.probePoints.length,
               probedPositions: this.probeState.probedPositions.length,
-              probedPos
+              machineX,
+              machineY,
+              workZ
             });
             if (this.probeState.probePoints.length > 0 && this.probeState.probedPositions.length < this.probeState.probePoints.length) {
               // Record the measurement at the intended grid node's XY and keep only the
@@ -922,14 +944,20 @@ class GrblController {
               // values splits one grid line into two 0.001 mm apart: the detected grid
               // spacing collapses and the lattice fills with holes, so compensation
               // subdivides every move into thousands of segments over a broken surface.
-              //
-              // Probe points carry the units the probe G-code was emitted in, which is
-              // the modal state -- $13 governs the PRB report only.
-              const isImperial = this.runner.getModalGroup().units === 'G20';
               const gridNode = this.probeState.probePoints[this.probeState.probedPositions.length];
-              probedPos.x = isImperial ? in2mm(gridNode.x) : gridNode.x;
-              probedPos.y = isImperial ? in2mm(gridNode.y) : gridNode.y;
-              probedPos.z = autolevel.surfaceZFromTrigger(probedPos.z, this.probeState.probeHeightMm);
+              if (Math.abs(machineX - gridNode.x) > autolevel.PROBE_TARGET_TOLERANCE_MM ||
+                Math.abs(machineY - gridNode.y) > autolevel.PROBE_TARGET_TOLERANCE_MM) {
+                this.abortSurfaceProbe(
+                  `[autolevel] Probe contact machine X${machineX.toFixed(3)} Y${machineY.toFixed(3)} ` +
+                  `missed grid point X${gridNode.x.toFixed(3)} Y${gridNode.y.toFixed(3)}`
+                );
+                return;
+              }
+              const probedPos = {
+                x: gridNode.x,
+                y: gridNode.y,
+                z: autolevel.surfaceZFromTrigger(workZ, this.probeState.probeHeightMm),
+              };
               // The first fine contact is the reference. Work Z during probing
               // is not the cutting Z0, so only the deviation is stored.
               if (!Number.isFinite(this.probeState.referenceSurfaceZ)) {
@@ -962,6 +990,8 @@ class GrblController {
                 minZ: this.probeState.minZ,
                 maxZ: this.probeState.maxZ,
                 maxDeviation: this.probeState.maxZ - this.probeState.minZ,
+                xyReference: this.probeState.xyReference,
+                machineReference: this.probeState.machineReference,
               });
 
               if (isCompleted) {
@@ -1640,6 +1670,15 @@ class GrblController {
           this.command('gcode:start');
         },
         'gcode:start': () => {
+          const drift = autolevel.compensationDriftError(this.sender.state.gcode, {
+            wco: this.workOffsetMm(),
+            wcs: this.runner.getWorkCoordinateSystem(),
+            machineReference: this.currentMachineReference(),
+          });
+          if (drift) {
+            this.emit('serialport:read', `[autolevel] ${drift}`);
+            return;
+          }
           this.event.trigger('gcode:start');
 
           this.workflow.start();
@@ -1738,6 +1777,7 @@ class GrblController {
         'homing': () => {
           this.event.trigger('homing');
 
+          this.homeCapture = 'ok';
           this.writeln('$H');
         },
         'sleep': () => {
@@ -1930,6 +1970,10 @@ class GrblController {
             referenceSurfaceZ: null,
             cuttingZeroX: null,
             cuttingZeroY: null,
+            cuttingZeroMachineX: null,
+            cuttingZeroMachineY: null,
+            xyReference: null,
+            machineReference: null,
           };
 
           // G10 / G43.1 are not in this list. They are queued only after the
@@ -2163,15 +2207,27 @@ class GrblController {
             return;
           }
 
-          // Full mode: multi-point probe grid
-          const probePoints = autolevel.createProbeXYPoints({
-            startX,
-            endX,
-            stepX,
-            startY,
-            endY,
-            stepY,
-          });
+          // Full mode: multi-point probe grid in machine coordinates.
+          // Start/end are distances inward from the homed position.
+          const imperial = this.runner.getModalGroup().units === 'G20';
+          let probePoints;
+          let machineReference;
+          try {
+            machineReference = this.currentMachineReference();
+            probePoints = autolevel.planMachineProbePoints({
+              startX,
+              endX,
+              stepX,
+              startY,
+              endY,
+              stepY,
+              imperial,
+              reference: machineReference,
+            });
+          } catch (err) {
+            this.emit('serialport:read', `[autolevel] ${err.message}`);
+            return;
+          }
 
           const fineFeed = Number(fineFeedrate);
           const retract = Number(probeRetract);
@@ -2214,6 +2270,8 @@ class GrblController {
             referenceSurfaceZ: null,
             cuttingZeroX: null,
             cuttingZeroY: null,
+            xyReference: autolevel.XY_REFERENCE_MACHINE,
+            machineReference,
           };
           autolevel.assignProbeHeight(
             this.probeState,
@@ -2232,9 +2290,13 @@ class GrblController {
 
             probeGCodes.push(`(Auto Level: probing point ${index})`);
 
+            const fmt = (mm) => {
+              const value = imperial ? mm2in(mm) : mm;
+              return String(Math.round(value * 10000) / 10000);
+            };
             probeGCodes.push('G90');
             probeGCodes.push(`G0 Z${clearanceZ}`);
-            probeGCodes.push(`G0 X${x} Y${y}`);
+            probeGCodes.push(`G53 G0 X${fmt(x)} Y${fmt(y)}`);
             probeGCodes.push(`G0 Z${startZ}`);
             probeGCodes.push(`G38.2 Z${endZ} F${feedrate}`);
             probeGCodes.push('G91');
@@ -2270,6 +2332,10 @@ class GrblController {
             referenceSurfaceZ: null,
             cuttingZeroX: null,
             cuttingZeroY: null,
+            cuttingZeroMachineX: null,
+            cuttingZeroMachineY: null,
+            xyReference: null,
+            machineReference: null,
           };
           log.info('[autolevel:stop] Probe stopped and state cleared');
         },
@@ -2294,6 +2360,8 @@ class GrblController {
             this.probeState.referenceX = surface.referenceX;
             this.probeState.referenceY = surface.referenceY;
             this.probeState.referenceSurfaceZ = surface.referenceSurfaceZ;
+            this.probeState.xyReference = surface.xyReference;
+            this.probeState.machineReference = surface.machineReference;
             this.probeState.probePhase = null;
             this.probeState.awaitingProbeRelease = false;
             this.probeState.probeReleaseClosedOnce = false;
@@ -2321,6 +2389,8 @@ class GrblController {
               referenceX,
               referenceY,
               referenceSurfaceZ,
+              xyReference,
+              machineReference,
             } = this.probeState;
             const data = autolevel.serializeProbeSurfaceFile(probedPositions, {
               normalized: normalized === true,
@@ -2328,6 +2398,8 @@ class GrblController {
               referenceX,
               referenceY,
               referenceSurfaceZ,
+              xyReference,
+              machineReference,
             });
 
             await fsp.writeFile(filepath, data, 'utf8');
@@ -2352,14 +2424,27 @@ class GrblController {
           } = params;
 
           try {
-            const zeroX = params.zeroX != null ? params.zeroX : this.probeState.cuttingZeroX;
-            const zeroY = params.zeroY != null ? params.zeroY : this.probeState.cuttingZeroY;
+            const xyReference = params.xyReference || this.probeState.xyReference;
+            const machineMap = xyReference === autolevel.XY_REFERENCE_MACHINE;
+            let zeroX = params.zeroX;
+            let zeroY = params.zeroY;
+            if (zeroX == null || zeroY == null) {
+              zeroX = machineMap ? this.probeState.cuttingZeroMachineX : this.probeState.cuttingZeroX;
+              zeroY = machineMap ? this.probeState.cuttingZeroMachineY : this.probeState.cuttingZeroY;
+            }
+            const wco = this.workOffsetMm();
             const compensatedGcode = autolevel.applyProbeCompensation(gcodeStr, probeData, {
               normalized: params.normalized === true,
               zeroX,
               zeroY,
               referenceX: params.referenceX != null ? params.referenceX : this.probeState.referenceX,
               referenceY: params.referenceY != null ? params.referenceY : this.probeState.referenceY,
+              xyReference,
+              wcoX: wco.x,
+              wcoY: wco.y,
+              activeWcs: this.runner.getWorkCoordinateSystem(),
+              machineReference: params.machineReference || this.probeState.machineReference,
+              liveMachineReference: machineMap ? this.currentMachineReference() : null,
             });
             if (typeof callback === 'function') {
               callback(null, { compensatedGcode });
@@ -2470,6 +2555,17 @@ class GrblController {
       if (Number.isFinite(zeroX) && Number.isFinite(zeroY)) {
         this.probeState.cuttingZeroX = zeroX;
         this.probeState.cuttingZeroY = zeroY;
+      }
+      const reportInches = this.runner.settings?.settings?.$13 === '1';
+      let machineZeroX = Number(value.x);
+      let machineZeroY = Number(value.y);
+      if (reportInches) {
+        machineZeroX = in2mm(machineZeroX);
+        machineZeroY = in2mm(machineZeroY);
+      }
+      if (Number.isFinite(machineZeroX) && Number.isFinite(machineZeroY)) {
+        this.probeState.cuttingZeroMachineX = machineZeroX;
+        this.probeState.cuttingZeroMachineY = machineZeroY;
       }
       const lines = [];
       if (touch.useTLO) {
@@ -2611,11 +2707,101 @@ class GrblController {
       log.silly(`> ${data}`);
     }
 
+    readTravelSettings() {
+      const settings = this.runner.settings?.settings || {};
+      const num = (key) => {
+        const value = Number(settings[key]);
+        return Number.isFinite(value) ? value : null;
+      };
+      return {
+        homingMask: num('$23'),
+        pulloff: num('$27'),
+        travelX: num('$130'),
+        travelY: num('$131'),
+      };
+    }
+
+    currentMachineReference() {
+      const home = this.machineReference;
+      if (!home || !Number.isFinite(home.homeX) || !Number.isFinite(home.homeY)) {
+        return null;
+      }
+      const travel = this.readTravelSettings();
+      return {
+        homeX: home.homeX,
+        homeY: home.homeY,
+        homingMask: travel.homingMask != null ? travel.homingMask : home.homingMask,
+        pulloff: travel.pulloff != null ? travel.pulloff : home.pulloff,
+        travelX: travel.travelX != null ? travel.travelX : home.travelX,
+        travelY: travel.travelY != null ? travel.travelY : home.travelY,
+      };
+    }
+
+    workOffsetMm() {
+      const mpos = this.runner.getMachinePosition();
+      const wpos = this.runner.getWorkPosition();
+      const reportInches = this.runner.settings?.settings?.$13 === '1';
+      const axis = (machine, work) => {
+        const value = Number(machine) - Number(work);
+        if (!Number.isFinite(value)) {
+          return null;
+        }
+        return reportInches ? in2mm(value) : value;
+      };
+      return {
+        x: axis(mpos.x, wpos.x),
+        y: axis(mpos.y, wpos.y),
+      };
+    }
+
+    captureHomeIfIdle() {
+      if (this.homeCapture !== 'status') {
+        return;
+      }
+      const active = _.get(this.runner.state, 'status.activeState', '');
+      if (active === 'Alarm') {
+        this.homeCapture = null;
+        this.machineReference = null;
+        return;
+      }
+      if (active !== 'Idle') {
+        return;
+      }
+      const mpos = this.runner.getMachinePosition();
+      const reportInches = this.runner.settings?.settings?.$13 === '1';
+      const axis = (value) => {
+        const number = Number(value);
+        if (!Number.isFinite(number)) {
+          return null;
+        }
+        return reportInches ? in2mm(number) : number;
+      };
+      const homeX = axis(mpos.x);
+      const homeY = axis(mpos.y);
+      if (homeX === null || homeY === null) {
+        return;
+      }
+      const travel = this.readTravelSettings();
+      this.machineReference = {
+        homeX,
+        homeY,
+        homingMask: travel.homingMask,
+        pulloff: travel.pulloff,
+        travelX: travel.travelX,
+        travelY: travel.travelY,
+      };
+      this.homeCapture = null;
+    }
+
     writeln(data, context) {
       // https://github.com/gnea/grbl/blob/master/doc/markdown/commands.md#grbl-v11-realtime-commands
       const isASCIIRealtimeCommand = _.includes(GRBL_REALTIME_COMMANDS, data);
       const isExtendedASCIIRealtimeCommand = String(data).match(/[\x80-\xff]/);
       const isRealtimeCommand = isASCIIRealtimeCommand || isExtendedASCIIRealtimeCommand;
+
+      if (!isRealtimeCommand && String(data).trim() === '$H') {
+        this.homeCapture = 'ok';
+      }
 
       if (isRealtimeCommand) {
         this.write(data, context);

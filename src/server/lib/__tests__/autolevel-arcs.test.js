@@ -7,9 +7,9 @@ import {
 } from '../autolevel';
 
 const flat = [
-  { x: 0, y: 0, z: 0 },
-  { x: 40, y: 0, z: 0 },
-  { x: 0, y: 40, z: 0 },
+  { x: -10, y: -10, z: 0 },
+  { x: 40, y: -10, z: 0 },
+  { x: -10, y: 40, z: 0 },
   { x: 40, y: 40, z: 0 },
 ];
 
@@ -189,7 +189,13 @@ describe('autolevel arc tessellation', () => {
   });
 
   test('a huge radius is capped instead of allocating millions of chords', () => {
-    const points = g1Points(body('G0 X100000000000000 Y0 Z0\nG3 X100000000000000 Y0 I-100000000000000 J0'));
+    const universe = [
+      { x: -2e14, y: -2e14, z: 0 },
+      { x: 2e14, y: -2e14, z: 0 },
+      { x: -2e14, y: 2e14, z: 0 },
+      { x: 2e14, y: 2e14, z: 0 },
+    ];
+    const points = g1Points(body('G0 X100000000000000 Y0 Z0\nG3 X100000000000000 Y0 I-100000000000000 J0', universe));
     expect(points.length).toBeGreaterThan(8);
     expect(points.length).toBeLessThan(5000);
     expect(points[points.length - 1].x).toBeCloseTo(100000000000000, -3);

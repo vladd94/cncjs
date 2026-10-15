@@ -11,6 +11,14 @@ import {
   in2mm,
 } from '../controllers/utils/units';
 import logger from './logger';
+import {
+  XY_REFERENCE_MACHINE,
+} from './probeSurfaceFile';
+
+export {
+  XY_REFERENCE_MACHINE,
+  XY_REFERENCE_WORK,
+} from './probeSurfaceFile';
 
 const log = logger('autolevel');
 
@@ -38,6 +46,163 @@ export const AUTOLEVEL_APPLIED_MARKER = 'cncjs-autolevel-applied';
 // program: work-origin height for a legacy raw map, or the surface deviation
 // at the cutting Z0 for a normalized map.
 export const AUTOLEVEL_REFERENCE_PREFIX = 'cncjs-autolevel-reference-z=';
+export const AUTOLEVEL_XY_PREFIX = 'cncjs-autolevel-xy=';
+export const AUTOLEVEL_WCO_PREFIX = 'cncjs-autolevel-wco-xy=';
+export const AUTOLEVEL_WCS_PREFIX = 'cncjs-autolevel-wcs=';
+export const AUTOLEVEL_HOME_PREFIX = 'cncjs-autolevel-machine-home=';
+export const AUTOLEVEL_HOMING_PREFIX = 'cncjs-autolevel-homing=';
+export const AUTOLEVEL_TRAVEL_PREFIX = 'cncjs-autolevel-travel-xy=';
+export const AUTOLEVEL_PULLOFF_PREFIX = 'cncjs-autolevel-pulloff=';
+
+// A successful probe this far from the commanded machine point is a miss.
+export const PROBE_TARGET_TOLERANCE_MM = 0.2;
+
+// $23 bit 0 inverts X, bit 1 inverts Y. A set bit homes toward negative,
+// so "inward" from that home is the positive direction.
+export const inwardSign = (homingMask, axis) => {
+  const mask = Math.abs(Number(homingMask)) || 0;
+  const place = axis === 'y' ? 2 : 1;
+  return Math.floor(mask / place) % 2 === 1 ? 1 : -1;
+};
+
+// Where Grbl parks after a correct homing cycle. Used to notice bad travel
+// settings. The probe origin is the observed home, not this prediction.
+export const predictedHomeMm = (homingMask, axis, travelMm, pulloffMm) => {
+  return inwardSign(homingMask, axis) === 1 ? -(travelMm - pulloffMm) : -pulloffMm;
+};
+
+export const homeRelativeToMachineMm = (reference, xMm, yMm) => ({
+  x: reference.homeX + inwardSign(reference.homingMask, 'x') * xMm,
+  y: reference.homeY + inwardSign(reference.homingMask, 'y') * yMm,
+});
+
+const finiteReference = (reference) => {
+  if (!reference) {
+    return false;
+  }
+  return [reference.homeX, reference.homeY, reference.homingMask, reference.travelX, reference.travelY, reference.pulloff]
+    .every(value => Number.isFinite(Number(value)));
+};
+
+export const planMachineProbePoints = ({
+  startX, endX, stepX, startY, endY, stepY, imperial = false, reference,
+}) => {
+  if (!reference || !Number.isFinite(Number(reference.homeX)) || !Number.isFinite(Number(reference.homeY))) {
+    throw new Error('Home the machine before probing. Start X and Start Y are distances inward from that homed position.');
+  }
+  if (!finiteReference(reference)) {
+    throw new Error('Machine travel settings ($23, $27, $130, $131) are not loaded. Reconnect, then home again before probing.');
+  }
+  const toMm = (value) => (imperial ? in2mm(Number(value)) : Number(value));
+  const relative = createProbeXYPoints({
+    startX: toMm(startX),
+    endX: toMm(endX),
+    stepX: toMm(stepX),
+    startY: toMm(startY),
+    endY: toMm(endY),
+    stepY: toMm(stepY),
+  });
+  if (relative.length === 0) {
+    throw new Error('The probe area does not contain any points');
+  }
+  const home = {
+    homeX: Number(reference.homeX),
+    homeY: Number(reference.homeY),
+    homingMask: Number(reference.homingMask),
+    travelX: Number(reference.travelX),
+    travelY: Number(reference.travelY),
+    pulloff: Number(reference.pulloff),
+  };
+  const predictedX = predictedHomeMm(home.homingMask, 'x', home.travelX, home.pulloff);
+  const predictedY = predictedHomeMm(home.homingMask, 'y', home.travelY, home.pulloff);
+  if (Math.abs(predictedX - home.homeX) > 1 || Math.abs(predictedY - home.homeY) > 1) {
+    throw new Error(
+      'Homing position does not match the travel settings, so the probe area was not used. ' +
+      `Observed home X${home.homeX.toFixed(3)} Y${home.homeY.toFixed(3)}; ` +
+      `settings predict X${predictedX.toFixed(3)} Y${predictedY.toFixed(3)}. ` +
+      'Calibrate $130, $131, and $27, then home again.'
+    );
+  }
+  const points = relative.map(point => homeRelativeToMachineMm(home, point.x, point.y));
+  const maxInwardX = home.travelX - home.pulloff;
+  const maxInwardY = home.travelY - home.pulloff;
+  points.forEach((point) => {
+    const inwardX = inwardSign(home.homingMask, 'x') * (point.x - home.homeX);
+    const inwardY = inwardSign(home.homingMask, 'y') * (point.y - home.homeY);
+    if (inwardX < -0.001 || inwardX > maxInwardX + 0.001 || inwardY < -0.001 || inwardY > maxInwardY + 0.001) {
+      throw new Error(
+        `Probe point machine X${point.x.toFixed(3)} Y${point.y.toFixed(3)} is outside configured travel. ` +
+        `Inward range from home X${home.homeX.toFixed(3)} Y${home.homeY.toFixed(3)} is ` +
+        `X 0..${maxInwardX.toFixed(3)} Y 0..${maxInwardY.toFixed(3)}.`
+      );
+    }
+  });
+  return points;
+};
+
+const nearlyEqual = (a, b, tolerance = 0.001) => Math.abs(Number(a) - Number(b)) <= tolerance;
+
+export const machineReferencesMatch = (saved, live) => {
+  if (!saved || !live) {
+    return false;
+  }
+  return nearlyEqual(saved.homeX, live.homeX, 0.05) &&
+    nearlyEqual(saved.homeY, live.homeY, 0.05) &&
+    Number(saved.homingMask) === Number(live.homingMask) &&
+    nearlyEqual(saved.travelX, live.travelX, 0.001) &&
+    nearlyEqual(saved.travelY, live.travelY, 0.001) &&
+    nearlyEqual(saved.pulloff, live.pulloff, 0.001);
+};
+
+const headerNumberPair = (line, prefix) => {
+  if (!line.startsWith(`; ${prefix}`)) {
+    return null;
+  }
+  const [a, b] = line.slice(prefix.length + 2).split(',').map(Number);
+  return [a, b];
+};
+
+// Null when the program has no machine-referenced compensation stamp.
+// A string when the live offset or machine reference no longer matches.
+export const compensationDriftError = (gcode, live = {}) => {
+  const text = String(gcode || '');
+  if (!text.includes(`${AUTOLEVEL_XY_PREFIX}machine`)) {
+    return null;
+  }
+  const lines = text.split('\n');
+  const read = (prefix) => lines.find(line => line.startsWith(`; ${prefix}`)) || '';
+  const wco = headerNumberPair(read(AUTOLEVEL_WCO_PREFIX), AUTOLEVEL_WCO_PREFIX);
+  const home = headerNumberPair(read(AUTOLEVEL_HOME_PREFIX), AUTOLEVEL_HOME_PREFIX);
+  const travel = headerNumberPair(read(AUTOLEVEL_TRAVEL_PREFIX), AUTOLEVEL_TRAVEL_PREFIX);
+  const homing = read(AUTOLEVEL_HOMING_PREFIX).slice(AUTOLEVEL_HOMING_PREFIX.length + 2);
+  const pulloff = read(AUTOLEVEL_PULLOFF_PREFIX).slice(AUTOLEVEL_PULLOFF_PREFIX.length + 2);
+  const wcs = read(AUTOLEVEL_WCS_PREFIX).slice(AUTOLEVEL_WCS_PREFIX.length + 2);
+  if (!wco || !home || !travel || homing === '' || pulloff === '') {
+    return 'Compensated G-code is missing its machine reference, so it was not started.';
+  }
+  const liveWco = live.wco || {};
+  const liveRef = live.machineReference;
+  if (!Number.isFinite(liveWco.x) || !Number.isFinite(liveWco.y) || !liveRef) {
+    return 'Home the machine and connect it before running compensated G-code. The work offset could not be checked.';
+  }
+  if (!nearlyEqual(wco[0], liveWco.x) || !nearlyEqual(wco[1], liveWco.y) || (wcs && live.wcs && wcs !== live.wcs)) {
+    return `Work offset changed after compensation (file ${wcs || 'WCS'} X${wco[0].toFixed(3)} Y${wco[1].toFixed(3)}, ` +
+      `controller ${live.wcs || 'WCS'} X${Number(liveWco.x).toFixed(3)} Y${Number(liveWco.y).toFixed(3)}). ` +
+      'Apply compensation again before running.';
+  }
+  const saved = {
+    homeX: home[0],
+    homeY: home[1],
+    homingMask: Number(homing),
+    travelX: travel[0],
+    travelY: travel[1],
+    pulloff: Number(pulloff),
+  };
+  if (!machineReferencesMatch(saved, liveRef)) {
+    return 'Machine home or travel settings changed after compensation. Probe the surface again before running.';
+  }
+  return null;
+};
 
 export {
   parseProbeFile,
@@ -540,13 +705,13 @@ const buildSurface = (probedPositions) => {
  * @param {number} referenceProbeZ - Probe height at the work origin, in mm
  * @returns {Point3} Compensated point in current units
  */
-const compensatePoint = (pt, surface, units = METRIC_UNITS, referenceProbeZ = 0) => {
+const compensatePoint = (pt, surface, units = METRIC_UNITS, referenceProbeZ = 0, lookupMm = null) => {
   // Probed positions are in mm; convert the query point to match.
   const x = units === IMPERIAL_UNITS ? in2mm(pt.x) : pt.x;
   const y = units === IMPERIAL_UNITS ? in2mm(pt.y) : pt.y;
   const z = units === IMPERIAL_UNITS ? in2mm(pt.z) : pt.z;
 
-  const probeZ = surface.zAt(x, y);
+  const probeZ = surface.zAt(lookupMm ? lookupMm.x : x, lookupMm ? lookupMm.y : y);
   if (probeZ === null) {
     log.warn('Cannot compute Z compensation for point');
     return pt;
@@ -699,6 +864,83 @@ export const createProbeXYPoints = (options) => {
   return positions;
 };
 
+const boundsOf = (points) => {
+  const bounds = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity };
+  points.forEach(({ x, y }) => {
+    bounds.minX = Math.min(bounds.minX, x);
+    bounds.maxX = Math.max(bounds.maxX, x);
+    bounds.minY = Math.min(bounds.minY, y);
+    bounds.maxY = Math.max(bounds.maxY, y);
+  });
+  return bounds;
+};
+
+const formatBounds = (bounds) => {
+  if (!Number.isFinite(bounds.minX)) {
+    return 'none';
+  }
+  return `X${bounds.minX.toFixed(3)}..${bounds.maxX.toFixed(3)} Y${bounds.minY.toFixed(3)}..${bounds.maxY.toFixed(3)}`;
+};
+
+// Endpoint envelope in the same frame as the probe map. Unsupported modes
+// fail here with the same error the rewriter uses.
+const cuttingBoundsMm = (lines, toLookupMm) => {
+  const supported = [0, 1, 2, 3, 4, 17, 18, 19, 20, 21, 40, 49, 53, 54, 90, 94];
+  let selectedUnits = null;
+  let units = METRIC_UNITS;
+  let x;
+  let y;
+  const samples = [];
+  lines.forEach((line, lineIndex) => {
+    const { line: strippedLine, words } = gcodeParser.parseLine(line, {
+      flatten: true,
+      lineMode: 'stripped',
+    });
+    if (!strippedLine || words.length === 0) {
+      return;
+    }
+    const gCodes = words.filter(word => /^G/i.test(word)).map(word => Number(word.slice(1)));
+    const unsupported = gCodes.find(code => !supported.includes(code));
+    if (unsupported !== undefined) {
+      throw new Error(`Unsupported G${unsupported} on line ${lineIndex + 1}: autolevel requires absolute G0/G1/G2/G3 moves in G54`);
+    }
+    const unitCode = gCodes.find(code => code === 20 || code === 21);
+    if (unitCode !== undefined) {
+      if (selectedUnits !== null && selectedUnits !== unitCode) {
+        throw new Error('Changing units within a compensated program is not supported');
+      }
+      selectedUnits = unitCode;
+      units = unitCode === 20 ? IMPERIAL_UNITS : METRIC_UNITS;
+    }
+    if (gCodes.includes(53)) {
+      return;
+    }
+    let nextX = x;
+    let nextY = y;
+    let moved = false;
+    words.forEach((word) => {
+      const letter = word[0].toUpperCase();
+      if (letter === 'X') {
+        nextX = parseFloat(word.substring(1));
+        moved = true;
+      }
+      if (letter === 'Y') {
+        nextY = parseFloat(word.substring(1));
+        moved = true;
+      }
+    });
+    if (!moved) {
+      return;
+    }
+    x = nextX;
+    y = nextY;
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      samples.push(toLookupMm(x, y, units));
+    }
+  });
+  return boundsOf(samples);
+};
+
 /**
  * Applies probe-based compensation to G-code to correct positional deviations.
  * Grid step size is automatically detected from probe data spacing.
@@ -751,14 +993,48 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
       surface,
       probeOptions.referenceProbeZ
     );
+  const machineMap = probeOptions.xyReference === XY_REFERENCE_MACHINE;
+  let wcoX = 0;
+  let wcoY = 0;
+  if (machineMap) {
+    wcoX = Number(probeOptions.wcoX);
+    wcoY = Number(probeOptions.wcoY);
+    if (!Number.isFinite(wcoX) || !Number.isFinite(wcoY)) {
+      throw new Error('Machine-referenced compensation needs the current X/Y work offset');
+    }
+    if (!finiteReference(probeOptions.machineReference)) {
+      throw new Error('Machine-referenced probe map is missing its home and travel record');
+    }
+    if (probeOptions.liveMachineReference && !machineReferencesMatch(probeOptions.machineReference, probeOptions.liveMachineReference)) {
+      throw new Error('Machine home or travel settings changed since this surface was probed. Probe the surface again.');
+    }
+  }
+  const toLookupMm = (x, y, pointUnits) => {
+    const xmm = pointUnits === IMPERIAL_UNITS ? in2mm(x) : x;
+    const ymm = pointUnits === IMPERIAL_UNITS ? in2mm(y) : y;
+    return machineMap ? { x: xmm + wcoX, y: ymm + wcoY } : { x: xmm, y: ymm };
+  };
+  const probeBounds = boundsOf(probedPositions);
+  const frame = machineMap ? 'machine' : 'map';
 
   log.info(`Applying Z compensation (auto-detected grid: ${stepX.toFixed(2)}mm × ${stepY.toFixed(2)}mm, ${probedPositions.length} points, ${normalized ? 'normalized surface' : `reference Z ${referenceProbeZ.toFixed(3)}mm`})...`);
 
   const lines = gcodeStr.split('\n');
+  const cuttingBounds = cuttingBoundsMm(lines, toLookupMm);
   const results = [
     `; ${AUTOLEVEL_APPLIED_MARKER}`,
     `; ${AUTOLEVEL_REFERENCE_PREFIX}${referenceProbeZ.toFixed(6)}`,
   ];
+  if (machineMap) {
+    const ref = probeOptions.machineReference;
+    results.push(`; ${AUTOLEVEL_XY_PREFIX}machine`);
+    results.push(`; ${AUTOLEVEL_WCO_PREFIX}${wcoX.toFixed(6)},${wcoY.toFixed(6)}`);
+    results.push(`; ${AUTOLEVEL_WCS_PREFIX}${probeOptions.activeWcs || 'G54'}`);
+    results.push(`; ${AUTOLEVEL_HOME_PREFIX}${Number(ref.homeX).toFixed(6)},${Number(ref.homeY).toFixed(6)}`);
+    results.push(`; ${AUTOLEVEL_HOMING_PREFIX}${Number(ref.homingMask)}`);
+    results.push(`; ${AUTOLEVEL_TRAVEL_PREFIX}${Number(ref.travelX).toFixed(6)},${Number(ref.travelY).toFixed(6)}`);
+    results.push(`; ${AUTOLEVEL_PULLOFF_PREFIX}${Number(ref.pulloff).toFixed(6)}`);
+  }
 
   let p0 = { x: 0, y: 0, z: 0 };
   let p0Initialized = false;
@@ -828,6 +1104,9 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
     }
     if (gCodes.includes(3)) {
       motion = 'G3';
+    }
+    if (machineMap && probeOptions.activeWcs && gCodes.includes(54) && probeOptions.activeWcs !== 'G54') {
+      throw new Error(`Program selects G54 but the controller is in ${probeOptions.activeWcs} on line ${lineIndex + 1}`);
     }
     if (gCodes.includes(53)) {
       // Machine-coordinate parking/retract moves must remain unmodified.
@@ -929,6 +1208,20 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
       results.push(line);
     };
 
+    const lookupFor = (point) => {
+      const lookup = toLookupMm(point.x, point.y, units);
+      if (!mapContains(probedPositions, lookup.x, lookup.y)) {
+        throw new Error(
+          `Cutting move is outside the probe area on line ${lineIndex + 1}: ` +
+          `${frame} X${lookup.x.toFixed(3)} Y${lookup.y.toFixed(3)} ` +
+          `(programmed X${point.x} Y${point.y}). ` +
+          `Measured ${frame} bounds ${formatBounds(probeBounds)}. ` +
+          `Cutting ${frame} bounds ${formatBounds(cuttingBounds)}.`
+        );
+      }
+      return lookup;
+    };
+
     const emitSegments = (segments, firstPrefix, restPrefix) => {
       if (segments.length === 0 && firstPrefix) {
         pushLine(firstPrefix);
@@ -936,7 +1229,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
       }
       for (let i = 1; i < segments.length; i++) {
         const seg = segments[i];
-        const cpt = compensatePoint(seg, surface, units, referenceProbeZ);
+        const cpt = compensatePoint(seg, surface, units, referenceProbeZ, lookupFor(seg));
         const prefix = i === 1 ? firstPrefix : restPrefix;
         const newLine = `${prefix} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
         pushLine(newLine.trim());
@@ -947,7 +1240,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
       if (isArc) {
         throw new Error(`Arc on line ${lineIndex + 1} needs a prior absolute XYZ position`);
       }
-      const cpt = compensatePoint(pt, surface, units, referenceProbeZ);
+      const cpt = compensatePoint(pt, surface, units, referenceProbeZ, lookupFor(pt));
       const newLine = `${lineWithoutGeom} X${cpt.x.toFixed(3)} Y${cpt.y.toFixed(3)} Z${cpt.z.toFixed(3)}`;
       results.push(newLine.trim());
       p0Initialized = true;
@@ -961,6 +1254,7 @@ export const applyProbeCompensation = (gcodeStr, probeData = [], options = {}) =
       const firstPrefix = ['G1', lineWithoutGeom].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
       emitSegments(segments, firstPrefix, 'G1');
     } else {
+      lookupFor(pt);
       const segments = subdivideSegment(p0, pt, maxSegmentLength);
       emitSegments(segments, lineWithoutGeom, motion || '');
     }
