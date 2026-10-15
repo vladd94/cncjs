@@ -11,7 +11,6 @@ import {
 } from 'electron';
 import Store from 'electron-store';
 import chalk from 'chalk';
-import mkdirp from 'mkdirp';
 import {
   createApplicationMenuTemplate,
   inputMenuTemplate,
@@ -34,7 +33,7 @@ if (shouldQuitImmediately) {
 
 // Create the user data directory if it does not exist
 const userDataPath = app.getPath('userData');
-mkdirp.sync(userDataPath);
+fs.mkdirSync(userDataPath, { recursive: true });
 
 function getBrowserWindowOptions() {
   const defaultOptions = {
