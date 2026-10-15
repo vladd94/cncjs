@@ -22,6 +22,9 @@
   "engines": {
     "node": ">=18"
   },
+  "resolutions": {
+    "jwa": "1.4.2"
+  },
   "preferGlobal": true,
   "scripts": {
     "build": "yarn build-prod",

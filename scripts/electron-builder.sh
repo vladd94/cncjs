@@ -31,4 +31,15 @@ npm run electron-rebuild -- \
     --module-dir=dist/cncjs \
     --which-module=serialport
 
-cross-env USE_HARD_LINKS=false npm run electron-builder -- "$@"
+# macOS DMG packaging can fail on shared CI runners with:
+#   hdiutil: couldn't eject "diskN" - Resource busy
+# Retry a few times before giving up.
+attempts=0
+until cross-env USE_HARD_LINKS=false npm run electron-builder -- "$@"; do
+  attempts=$((attempts + 1))
+  if [ "$attempts" -ge 3 ]; then
+    exit 1
+  fi
+  echo "electron-builder failed (attempt ${attempts}); retrying in 15s..."
+  sleep 15
+done
