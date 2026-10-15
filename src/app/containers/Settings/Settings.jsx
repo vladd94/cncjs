@@ -27,6 +27,7 @@ import Controller from './Controller';
 import Commands from './Commands';
 import Events from './Events';
 import About from './About';
+import ExitKiosk from './ExitKiosk';
 import styles from './index.styl';
 
 const mapSectionPathToId = (path = '') => {
@@ -43,49 +44,49 @@ class Settings extends PureComponent {
         id: 'general',
         path: 'general',
         title: i18n._('General'),
-        component: (props) => <General {...props} />
+        component: General
       },
       {
         id: 'workspace',
         path: 'workspace',
         title: i18n._('Workspace'),
-        component: (props) => <Workspace {...props} />
+        component: Workspace
       },
       {
         id: 'controller',
         path: 'controller',
         title: i18n._('Controller'),
-        component: (props) => <Controller {...props} />
+        component: Controller
       },
       {
         id: 'machineProfiles',
         path: 'machine-profiles',
         title: i18n._('Machine Profiles'),
-        component: (props) => <MachineProfiles {...props} />
+        component: MachineProfiles
       },
       {
         id: 'userAccounts',
         path: 'user-accounts',
         title: i18n._('User Accounts'),
-        component: (props) => <UserAccounts {...props} />
+        component: UserAccounts
       },
       {
         id: 'commands',
         path: 'commands',
         title: i18n._('Commands'),
-        component: (props) => <Commands {...props} />
+        component: Commands
       },
       {
         id: 'events',
         path: 'events',
         title: i18n._('Events'),
-        component: (props) => <Events {...props} />
+        component: Events
       },
       {
         id: 'about',
         path: 'about',
         title: i18n._('About'),
-        component: (props) => <About {...props} />
+        component: About
       }
     ];
 
@@ -1243,6 +1244,9 @@ class Settings extends PureComponent {
                 <nav className={styles.navbar}>
                   <ul className={styles.nav}>
                     {sectionItems}
+                    <li>
+                      <ExitKiosk />
+                    </li>
                   </ul>
                 </nav>
               </div>

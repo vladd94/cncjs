@@ -129,6 +129,65 @@ class ProbeWidget extends PureComponent {
         const retractionDistance = event.target.value;
         this.setState({ retractionDistance });
       },
+      handleFineFeedrateChange: (event) => {
+        const fineFeedrate = event.target.value;
+        this.setState({ fineFeedrate });
+      },
+      handleProbeRetractChange: (event) => {
+        const probeRetract = event.target.value;
+        this.setState({ probeRetract });
+      },
+      usesServerTouchProbe: () => {
+        const { controller: controllerState, probeAxis } = this.state;
+        return controllerState.type === GRBL && probeAxis === 'Z';
+      },
+      touchProbePreview: () => {
+        const {
+          probeDepth,
+          probeFeedrate,
+          fineFeedrate,
+          probeRetract,
+          touchPlateHeight,
+          retractionDistance,
+          useTLO,
+          units
+        } = this.state;
+        const displayUnits = (units === IMPERIAL_UNITS) ? i18n._('in') : i18n._('mm');
+        const feedUnits = (units === IMPERIAL_UNITS) ? i18n._('in/min') : i18n._('mm/min');
+        const offsetLine = useTLO
+          ? i18n._('Tool length is set only after the slow touch')
+          : i18n._('Work Z is set only after the slow touch');
+
+        return [
+          `${i18n._('Coarse probe')}: G38.2 Z-${probeDepth} @ ${probeFeedrate} ${feedUnits}`,
+          `${i18n._('Intermediate retract')}: ${probeRetract} ${displayUnits}`,
+          `${i18n._('Fine probe')}: G38.2 ${fineFeedrate} ${feedUnits}, ${i18n._('short search')}`,
+          `${i18n._('Touch plate')}: ${touchPlateHeight} ${displayUnits}`,
+          `${i18n._('Final retract')}: ${retractionDistance} ${displayUnits}`,
+          offsetLine
+        ];
+      },
+      runTouchProbe: () => {
+        const {
+          probeDepth,
+          probeFeedrate,
+          fineFeedrate,
+          probeRetract,
+          touchPlateHeight,
+          retractionDistance,
+          useTLO
+        } = this.state;
+
+        controller.command('probe:z', {
+          probeDepth: Number(probeDepth),
+          probeFeedrate: Number(probeFeedrate),
+          fineFeedrate: Number(fineFeedrate),
+          probeRetract: Number(probeRetract),
+          touchPlateHeight: Number(touchPlateHeight),
+          retractionDistance: Number(retractionDistance),
+          useTLO: !!useTLO
+        });
+      },
       populateProbeCommands: () => {
         const {
           probeAxis,
@@ -291,6 +350,8 @@ class ProbeWidget extends PureComponent {
           },
           probeDepth: mapValueToUnits(this.config.get('probeDepth'), units),
           probeFeedrate: mapValueToUnits(this.config.get('probeFeedrate'), units),
+          fineFeedrate: mapValueToUnits(this.config.get('fineFeedrate', 10), units),
+          probeRetract: mapValueToUnits(this.config.get('probeRetract', 1), units),
           touchPlateHeight: mapValueToUnits(this.config.get('touchPlateHeight'), units),
           retractionDistance: mapValueToUnits(this.config.get('retractionDistance'), units)
         });
@@ -327,6 +388,8 @@ class ProbeWidget extends PureComponent {
       let {
         probeDepth,
         probeFeedrate,
+        fineFeedrate,
+        probeRetract,
         touchPlateHeight,
         retractionDistance
       } = this.state;
@@ -335,11 +398,15 @@ class ProbeWidget extends PureComponent {
       if (units === IMPERIAL_UNITS) {
         probeDepth = in2mm(probeDepth);
         probeFeedrate = in2mm(probeFeedrate);
+        fineFeedrate = in2mm(fineFeedrate);
+        probeRetract = in2mm(probeRetract);
         touchPlateHeight = in2mm(touchPlateHeight);
         retractionDistance = in2mm(retractionDistance);
       }
       this.config.set('probeDepth', Number(probeDepth));
       this.config.set('probeFeedrate', Number(probeFeedrate));
+      this.config.set('fineFeedrate', Number(fineFeedrate));
+      this.config.set('probeRetract', Number(probeRetract));
       this.config.set('touchPlateHeight', Number(touchPlateHeight));
       this.config.set('retractionDistance', Number(retractionDistance));
     }
@@ -367,6 +434,8 @@ class ProbeWidget extends PureComponent {
         useTLO: this.config.get('useTLO'),
         probeDepth: Number(this.config.get('probeDepth') || 0).toFixed(3) * 1,
         probeFeedrate: Number(this.config.get('probeFeedrate') || 0).toFixed(3) * 1,
+        fineFeedrate: Number(this.config.get('fineFeedrate', 10)).toFixed(3) * 1,
+        probeRetract: Number(this.config.get('probeRetract', 1)).toFixed(3) * 1,
         touchPlateHeight: Number(this.config.get('touchPlateHeight') || 0).toFixed(3) * 1,
         retractionDistance: Number(this.config.get('retractionDistance') || 0).toFixed(3) * 1
       };

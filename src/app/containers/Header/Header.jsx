@@ -285,12 +285,10 @@ class Header extends PureComponent {
             placement="right"
           >
             <Anchor
-              className="navbar-brand"
+              className={classNames('navbar-brand', styles.brand)}
               style={{
                 padding: 0,
                 position: 'relative',
-                height: 50,
-                width: 60
               }}
               href={releases}
               target="_blank"

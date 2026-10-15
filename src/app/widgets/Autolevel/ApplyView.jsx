@@ -136,6 +136,19 @@ class ApplyView extends PureComponent {
       return;
     }
 
+    // Compensated exports are named AL_*; refusing here avoids stacking Z offsets
+    // if the user re-selects an already leveled file (server also checks a marker).
+    if (/^AL_/i.test(fileName) || /cncjs-autolevel-applied/i.test(gcode)) {
+      this.setState({
+        pipelineState: PIPELINE_ERROR,
+        processingPhase: null,
+        gcodeFileName: fileName,
+        originalGcode: gcode,
+        errorMessage: i18n._('This file is already autolevel-compensated. Load the original G-code instead.'),
+      });
+      return;
+    }
+
     if (!probedPositions || probedPositions.length < 3) {
       this.setState({
         pipelineState: PIPELINE_ERROR,
@@ -237,7 +250,6 @@ class ApplyView extends PureComponent {
           this.fileInputEl = el;
         }}
         type="file"
-        accept=".gcode,.nc,.tap,.cnc"
         style={{ display: 'none' }}
         onChange={this.handleFileSelect}
       />
@@ -322,6 +334,9 @@ class ApplyView extends PureComponent {
       <div className={styles.section}>
         <div className={styles.sectionTitle}>
           {i18n._('Probe Compensation')}
+        </div>
+        <div className="alert alert-success" role="status">
+          {i18n._('Compensation applied — corrected G-code loaded in workspace.')}
         </div>
         <div className="form-group">
           <div className={styles.gcodeDataInfo}>

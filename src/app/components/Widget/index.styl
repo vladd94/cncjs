@@ -147,3 +147,60 @@
         }
     }
 }
+
+@media (max-width: 1100px) {
+    .widget {
+        margin-bottom: 12px;
+        border-radius: var(--cnc-radius, 10px);
+        // Visible so header menus (3D View, G54, widget options) can hang
+        // over the canvas. overflow:hidden clipped them to this box, which
+        // collapses to the header when the visualizer content is absolute.
+        overflow: visible;
+        background: var(--cnc-surface, #fff);
+        border: 1px solid var(--cnc-border, #cfd8e3);
+
+        &.widget-fullscreen {
+            top: var(--cnc-header-h, 52px);
+            left: 0;
+            right: 0;
+            bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+            border-radius: 0;
+            border: 0;
+
+            @media (orientation: landscape) and (max-height: 600px) {
+                left: env(safe-area-inset-left, 0px);
+                right: env(safe-area-inset-right, 0px);
+            }
+        }
+
+        .widget-header {
+            background: #f1f5f9;
+            border: 0;
+            border-bottom: 1px solid var(--cnc-border, #cfd8e3);
+        }
+
+        .widget-title {
+            font-family: var(--cnc-display, inherit);
+            font-weight: 600;
+            letter-spacing: 0.01em;
+        }
+
+        .widget-content,
+        .widget-footer {
+            border: 0;
+            background: transparent;
+        }
+
+        .widget-content {
+            padding: 12px;
+        }
+
+        @media (orientation: landscape) and (max-height: 600px) {
+            margin-bottom: 8px;
+
+            .widget-content {
+                padding: 8px;
+            }
+        }
+    }
+}

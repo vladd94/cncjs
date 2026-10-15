@@ -49,3 +49,42 @@ $widget-footer-height = $widget-footer-padding-top + 28px + $widget-footer-paddi
     right: 0;
     height: $widget-footer-height;
 }
+
+.probe-compensation-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    font-size: 1.2rem;
+    color: #d9534f;
+    font-weight: bold;
+    background-color: rgba(255, 255, 255, .9);
+    padding: 4px 8px;
+    border-radius: 3px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
+}
+
+// Portrait phones: keep the camera toolbar and the compensation label
+// below the canvas so they do not cover the toolpath or the upload row.
+@media (max-width: 1100px) and (orientation: portrait) {
+    .widget-header,
+    .widget-content,
+    .widget-footer {
+        position: relative;
+        top: auto;
+        right: auto;
+        bottom: auto;
+        left: auto;
+        height: auto;
+        min-width: 0;
+    }
+
+    .widget-content.view3D {
+        bottom: auto;
+    }
+
+    .probe-compensation-badge {
+        position: static;
+        display: block;
+        margin: 4px 8px;
+    }
+}

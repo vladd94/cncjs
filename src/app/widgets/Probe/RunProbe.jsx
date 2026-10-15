@@ -13,8 +13,11 @@ class RunProbe extends PureComponent {
     render() {
       const { state, actions } = this.props;
       const { useTLO } = state;
-      const probeCommands = actions.populateProbeCommands();
-      const content = probeCommands.join('\n');
+      const serverTouchProbe = actions.usesServerTouchProbe();
+      const probeCommands = serverTouchProbe ? [] : actions.populateProbeCommands();
+      const content = serverTouchProbe
+        ? actions.touchProbePreview().join('\n')
+        : probeCommands.join('\n');
 
       return (
         <Modal disableOverlay size="sm" onClose={actions.closeModal}>
@@ -47,7 +50,11 @@ class RunProbe extends PureComponent {
               className="btn btn-primary"
               onClick={() => {
                 actions.closeModal();
-                actions.runProbeCommands(probeCommands);
+                if (serverTouchProbe) {
+                  actions.runTouchProbe();
+                } else {
+                  actions.runProbeCommands(probeCommands);
+                }
               }}
             >
               {i18n._('Run Probe')}

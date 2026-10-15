@@ -100,11 +100,8 @@ class ProbeVisualization {
       }
 
       // Draw probe points with Z-offset labels
-      probeData.forEach((point, index) => {
+      probeData.forEach((point) => {
         const { x, y, z } = point;
-
-        // Calculate Z offset relative to first point
-        const zOffset = index === 0 ? 0 : z - probeData[0].z;
 
         // Color based on Z height (green = low/negative, red = high/positive)
         const normalizedZ = zRange > 0 ? (z - minZ) / zRange : 0;
@@ -115,8 +112,7 @@ class ProbeVisualization {
         // Draw sphere at probe point (at Z = 0 for top-down view)
         this.drawProbePoint(x, y, z, color);
 
-        // Add Z-offset label next to the point
-        this.drawZOffsetLabel(x, y, z, zOffset);
+        this.drawZOffsetLabel(x, y, z, z);
       });
     }
   }
@@ -282,11 +278,15 @@ class ProbeVisualization {
     const material = new THREE.MeshBasicMaterial({
       vertexColors: THREE.VertexColors,
       side: THREE.DoubleSide,
-      opacity: 0.7,
+      opacity: 0.35,
       transparent: true,
+      // A depth-writing sheet hides every cut that starts at Z0 and goes
+      // below the probed surface. Leave the depth buffer to the toolpath.
+      depthWrite: false
     });
 
     const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 1;
     this.group.add(mesh);
   }
 
@@ -406,15 +406,14 @@ class ProbeVisualization {
       }
 
       // Draw probe points with Z-offset labels
-      probeData.forEach((point, index) => {
+      probeData.forEach((point) => {
         const { x, y, z } = point;
-        const zOffset = index === 0 ? 0 : z - probeData[0].z;
         const normalizedZ = zRange > 0 ? (z - minZ) / zRange : 0;
         const color = new THREE.Color();
         color.setHSL(0.33 - normalizedZ * 0.33, 0.8, 0.4);
 
         this.drawProbePoint(x, y, z, color);
-        this.drawZOffsetLabel(x, y, z, zOffset);
+        this.drawZOffsetLabel(x, y, z, z);
       });
     }
   }

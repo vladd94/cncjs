@@ -91,6 +91,11 @@ class Controller {
         state: 'idle' // running|paused|idle
     };
 
+    // Last successful serial open options. Kept across Socket.IO reconnects so
+    // the client can reattach without reopening the physical port. Cleared only
+    // on intentional serialport:close or Controller.disconnect() (sign-out).
+    connectionOptions = null;
+
     // @param {object} io The socket.io-client module.
     constructor(io) {
         if (!io) {
@@ -123,17 +128,37 @@ class Controller {
 
             this.socket.on(eventName, (...args) => {
                 if (eventName === 'serialport:open') {
-                    const { controllerType, port } = { ...args[0] };
+                    const {
+                        controllerType,
+                        port,
+                        baudrate,
+                        rtscts,
+                        pin
+                    } = { ...args[0] };
                     this.port = port;
                     this.type = controllerType;
+                    // Keep rtscts/pin from the last openPort() when the server
+                    // omits them on serialport:open (addConnection payload).
+                    const prev = this.connectionOptions || {};
+                    this.connectionOptions = {
+                        controllerType: controllerType || prev.controllerType,
+                        baudrate: (baudrate !== undefined) ? baudrate : prev.baudrate,
+                        rtscts: (rtscts !== undefined) ? rtscts : prev.rtscts,
+                        pin: (pin !== undefined) ? pin : prev.pin
+                    };
                 }
                 if (eventName === 'serialport:close') {
+                    // Intentional serial close — forget the port so a later
+                    // Socket.IO reconnect will not reattach.
                     this.port = '';
                     this.type = '';
+                    this.connectionOptions = null;
                     this.state = {};
                     this.settings = {};
                     this.workflow.state = 'idle';
                 }
+                // Transient Socket.IO disconnect must NOT clear this.port /
+                // connectionOptions. The server-side serial controller stays open.
                 if (eventName === 'workflow:state') {
                     this.workflow.state = args[0];
                 }
@@ -144,6 +169,12 @@ class Controller {
                 if (eventName === 'controller:state') {
                     this.type = args[0];
                     this.state = { ...args[1] };
+                }
+                // Socket.IO fires "reconnect" only after a prior connection was
+                // lost — not on the initial connect. Re-emit open so the server
+                // addConnection()s this socket without opening serial again.
+                if (eventName === 'reconnect') {
+                    this.reattachSerialPort();
                 }
 
                 const listeners = ensureArray(this.listeners[eventName]);
@@ -170,10 +201,24 @@ class Controller {
             }
         });
     }
+    // Reattach to an already-open server controller after Socket.IO reconnect.
+    // Emits open(port, options) only — never gcode:start/resume/cyclestart.
+    reattachSerialPort() {
+        const port = this.port;
+        const options = this.connectionOptions;
+        if (!port || !options || !this.socket) {
+            return;
+        }
+        this.socket.emit('open', port, { ...options }, noop);
+    }
     // Disconnect from the server.
     disconnect() {
         this.socket && this.socket.destroy();
         this.socket = null;
+        // Sign-out / intentional teardown — do not reattach later.
+        this.port = '';
+        this.type = '';
+        this.connectionOptions = null;
     }
     // Adds the `listener` function to the end of the listeners array for the event named `eventName`.
     // @param {string} eventName The name of the event.
@@ -211,6 +256,14 @@ class Controller {
         if (typeof callback !== 'function') {
             callback = noop;
         }
+        // Remember options before the server ack so a reconnect during open
+        // still has enough information to reattach.
+        this.connectionOptions = {
+            controllerType: options.controllerType,
+            baudrate: options.baudrate,
+            rtscts: options.rtscts,
+            pin: options.pin
+        };
         this.socket && this.socket.emit('open', port, options, callback);
     }
     // Closes an open connection.

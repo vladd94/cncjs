@@ -28,8 +28,8 @@ const _ = (...args) => {
     }
     if (containsPlural) {
       const lng = i18next.language || 'en';
-      const suffix = i18next.services?.pluralResolver?.getSuffix(lng, count)
-        ?? (i18next.options.pluralSeparator + 'other');
+      const suffix = i18next.services?.pluralResolver?.getSuffix(lng, count) ??
+        (i18next.options.pluralSeparator + 'other');
       value += suffix;
     }
     return sha1(value);

@@ -115,31 +115,29 @@ const TOOL_CHANGE_IMPERIAL_SUFFIX = [
   'G4 P5\n',
 ];
 
+const fineTravel = (retract) => Math.round(retract * 1.5 * 10000) / 10000;
+
+const doubleTouchLines = (x, y, feed, retract) => [
+  'G90\n',
+  'G0 Z5\n',
+  `G53 G0 X${x} Y${y}\n`,
+  'G0 Z1\n',
+  `G38.2 Z-1 F${feed}\n`,
+  'G91\n',
+  `G0 Z${retract}\n`,
+  'G4 P0\n',
+  'G90\n',
+  '?',
+];
+
+// $23=3, $27=2.5, $130=$131=400 parks at MPos -397.5. Inward is positive.
+const HOMED_MPOS = -397.5;
+
 const AUTOLEVEL_GRID_WRITES = [
-  'G90\n',
-  'G0 Z5\n',
-  'G0 X0 Y0\n',
-  'G0 Z1\n',
-  'G38.2 Z-1 F50\n',
-  'G0 Z5\n',
-  'G90\n',
-  'G0 Z5\n',
-  'G0 X10 Y0\n',
-  'G0 Z1\n',
-  'G38.2 Z-1 F100\n',
-  'G0 Z5\n',
-  'G90\n',
-  'G0 Z5\n',
-  'G0 X0 Y10\n',
-  'G0 Z1\n',
-  'G38.2 Z-1 F100\n',
-  'G0 Z5\n',
-  'G90\n',
-  'G0 Z5\n',
-  'G0 X10 Y10\n',
-  'G0 Z1\n',
-  'G38.2 Z-1 F100\n',
-  'G0 Z5\n',
+  ...doubleTouchLines(HOMED_MPOS, HOMED_MPOS, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS + 10, HOMED_MPOS, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS, HOMED_MPOS + 10, 100, 1),
+  ...doubleTouchLines(HOMED_MPOS + 10, HOMED_MPOS + 10, 100, 1),
 ];
 
 const PROBE_FIXTURE = '0 0 -1.5 0 0 0 0 0 0\n10 0 -1 0 0 0 0 0 0\n';
@@ -182,6 +180,18 @@ const setup = (configValues = {}) => {
   });
   const { controller, writes } = createController(GrblController);
   clearInterval(controller.queryTimer);
+  controller.runner.settings.settings.$23 = '3';
+  controller.runner.settings.settings.$27 = '2.5';
+  controller.runner.settings.settings.$130 = '400';
+  controller.runner.settings.settings.$131 = '400';
+  controller.machineReference = {
+    homeX: HOMED_MPOS,
+    homeY: HOMED_MPOS,
+    homingMask: 3,
+    pulloff: 2.5,
+    travelX: 400,
+    travelY: 400,
+  };
   const socketEvents = [];
   controller.sockets.test = { emit: (event, ...args) => socketEvents.push({ event, args }) };
   activeControllers.push(controller);
@@ -422,7 +432,7 @@ describe('GrblController', () => {
   });
 
   describe('sender workflow', () => {
-    test('gcode:load loads the program with an appended dwell and reports the sender state', () => {
+    test('gcode:load appends the planner wait after the program', () => {
       const { controller, writes, socketEvents } = setup();
       const callback = jest.fn();
 
@@ -437,6 +447,12 @@ describe('GrblController', () => {
         received: 0,
       }));
       expect(controller.sender.state.gcode).toBe(`${SHORT_PROGRAM}\n%wait ; Wait for the planner to empty`);
+      expect(controller.sender.state.lines).toEqual([
+        'G0 X0',
+        'G0 Y0',
+        'M30',
+        '%wait ; Wait for the planner to empty',
+      ]);
       expect(writes).toEqual([]);
       expect(socketEvents.some(({ event }) => event === 'gcode:load')).toBe(true);
     });
@@ -452,21 +468,18 @@ describe('GrblController', () => {
       expect(json).toEqual(expect.objectContaining({ name: 'test.gcode', total: 2 }));
     });
 
-    // The controller appends the %wait dwell before Sender.load validates its input,
-    // so empty and non-string programs are string-concatenated into a non-empty
-    // program instead of reaching the Invalid G-code error branch.
     test.each([
-      ['an empty program', '', 1],
-      ['a non-string program', 42, 2],
-    ])('gcode:load accepts %s because the appended dwell makes it non-empty', (name, gcode, total) => {
+      ['an empty program', ''],
+      ['a non-string program', 42],
+    ])('gcode:load still stores the planner wait for %s', (name, gcode) => {
       const { controller } = setup();
       const callback = jest.fn();
 
       controller.command('gcode:load', 'test.gcode', gcode, callback);
 
-      const [err, json] = callback.mock.calls[0];
+      const [err] = callback.mock.calls[0];
       expect(err).toBe(null);
-      expect(json).toEqual(expect.objectContaining({ name: 'test.gcode', total }));
+      expect(controller.sender.state.lines[controller.sender.state.lines.length - 1]).toBe('%wait ; Wait for the planner to empty');
     });
 
     test('gcode:unload stops the workflow and clears the sender', () => {
@@ -733,6 +746,8 @@ describe('GrblController', () => {
         startZ: 1,
         endZ: -1,
         feedrate: 100,
+        fineFeedrate: 30,
+        probeRetract: 1,
       };
 
       controller.command('autolevel:start', params);
@@ -740,10 +755,10 @@ describe('GrblController', () => {
 
       expect(writes.map(write => write.data)).toEqual(AUTOLEVEL_GRID_WRITES);
       expect(controller.probeState.probePoints).toEqual([
-        { x: 0, y: 0 },
-        { x: 10, y: 0 },
-        { x: 0, y: 10 },
-        { x: 10, y: 10 },
+        { x: HOMED_MPOS, y: HOMED_MPOS },
+        { x: HOMED_MPOS + 10, y: HOMED_MPOS },
+        { x: HOMED_MPOS, y: HOMED_MPOS + 10 },
+        { x: HOMED_MPOS + 10, y: HOMED_MPOS + 10 },
       ]);
       expect(controller.probeState.probedPositions).toEqual([]);
       expect(controller.probeState.minZ).toBe(null);
@@ -754,6 +769,7 @@ describe('GrblController', () => {
     test('the probe measurement is stored at the intended grid node with the measured Z', () => {
       const { controller } = setup();
       controller.probeState.probePoints = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
+      controller.probeState.probePhase = 'fine';
       controller.runner.state.status = {
         mpos: { x: '0.000', y: '0.000', z: '0.000' },
         wpos: { x: '0.000', y: '0.000', z: '0.000' },
@@ -765,6 +781,7 @@ describe('GrblController', () => {
         name: 'PRB',
         value: { result: 1, x: '0.001', y: '0.001', z: '-1.500' },
       });
+      controller.probeState.probePhase = 'fine';
       controller.runner.emit('parameters', {
         raw: '[PRB:10.001,-0.001,-1.000:1]',
         name: 'PRB',
@@ -772,11 +789,127 @@ describe('GrblController', () => {
       });
 
       expect(controller.probeState.probedPositions).toEqual([
-        { x: 0, y: 0, z: -1.5 },
-        { x: 10, y: 0, z: -1 },
+        { x: 0, y: 0, z: 0 },
+        { x: 10, y: 0, z: 0.5 },
       ]);
-      expect(controller.probeState.minZ).toBe(-1.5);
-      expect(controller.probeState.maxZ).toBe(-1);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.5, 6);
+      expect(controller.probeState.minZ).toBe(0);
+      expect(controller.probeState.maxZ).toBe(0.5);
+    });
+
+    test('probe height is subtracted from each trigger before the point is stored', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', {
+        startX: 0,
+        endX: 10,
+        stepX: 10,
+        startY: 0,
+        endY: 0,
+        stepY: 10,
+        clearanceZ: 5,
+        startZ: 1,
+        endZ: -1,
+        feedrate: 100,
+        probeRetract: 0.5,
+        probeHeight: 1.653,
+      });
+      flushFeeder(controller);
+
+      expect(controller.probeState.normalized).toBe(true);
+      expect(controller.probeState.probeHeightMm).toBeCloseTo(1.653, 6);
+
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+      const emit = (z) => {
+        const node = controller.probeState.probePoints[controller.probeState.probedPositions.length];
+        const x = Number(node.x).toFixed(3);
+        const y = Number(node.y).toFixed(3);
+        controller.runner.emit('parameters', {
+          raw: `[PRB:${x},${y},${z}:1]`,
+          name: 'PRB',
+          value: { result: 1, x, y, z: String(z) },
+        });
+      };
+
+      emit(99);
+      emit(1.760);
+      emit(99);
+      emit(1.500);
+
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(0.107, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(-0.260, 6);
+    });
+
+    test('a trigger equal to the probe height is stored as surface zero', () => {
+      const { controller } = setup();
+      controller.probeState.probePoints = [{ x: 0, y: 0 }, { x: 10, y: 0 }];
+      controller.probeState.probeHeightMm = 5;
+      controller.probeState.probePhase = 'fine';
+      controller.probeState.normalized = true;
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+
+      controller.runner.emit('parameters', {
+        raw: '[PRB:0.000,0.000,5.000:1]',
+        name: 'PRB',
+        value: { result: 1, x: '0.000', y: '0.000', z: '5.000' },
+      });
+      controller.probeState.probePhase = 'fine';
+      controller.runner.emit('parameters', {
+        raw: '[PRB:10.000,0.000,5.125:1]',
+        name: 'PRB',
+        value: { result: 1, x: '10.000', y: '0.000', z: '5.125' },
+      });
+
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+      expect(controller.probeState.probedPositions[1].z).toBeCloseTo(0.125, 6);
+    });
+
+    test('an inch probe height is converted to millimetres before it is subtracted', () => {
+      const { controller } = setup();
+      setUnitsG20(controller);
+      controller.command('autolevel:start', {
+        startX: 0,
+        endX: 0,
+        stepX: 1,
+        startY: 0,
+        endY: 0,
+        stepY: 1,
+        clearanceZ: 1,
+        startZ: 0.1,
+        endZ: -0.1,
+        feedrate: 10,
+        probeRetract: 0.04,
+        probeHeight: 5,
+      });
+      flushFeeder(controller);
+
+      expect(controller.probeState.probeHeightMm).toBeCloseTo(127, 6);
+      controller.runner.state.status = {
+        mpos: { x: '0.000', y: '0.000', z: '0.000' },
+        wpos: { x: '0.000', y: '0.000', z: '0.000' },
+      };
+      const node = controller.probeState.probePoints[0];
+      const x = Number(node.x).toFixed(3);
+      const y = Number(node.y).toFixed(3);
+      controller.runner.emit('parameters', {
+        raw: `[PRB:${x},${y},1.000:1]`,
+        name: 'PRB',
+        value: { result: 1, x, y, z: '1.000' },
+      });
+      controller.runner.emit('parameters', {
+        raw: `[PRB:${x},${y},130.175:1]`,
+        name: 'PRB',
+        value: { result: 1, x, y, z: '130.175' },
+      });
+
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(3.175, 3);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
     });
 
     test('autolevel:stop resets the controller and clears the probe state', () => {
@@ -799,6 +932,22 @@ describe('GrblController', () => {
         minZ: null,
         maxZ: null,
         config: null,
+        probePhase: null,
+        awaitingProbeRelease: false,
+        probeReleaseClosedOnce: false,
+        distanceModeRestorePending: false,
+        touchZero: null,
+        fineCommandOpen: false,
+        coarseTriggerZ: null,
+        referenceX: null,
+        referenceY: null,
+        referenceSurfaceZ: null,
+        cuttingZeroX: null,
+        cuttingZeroY: null,
+        cuttingZeroMachineX: null,
+        cuttingZeroMachineY: null,
+        xyReference: null,
+        machineReference: null,
       });
     });
 
@@ -871,7 +1020,7 @@ describe('GrblController', () => {
       const callback = jest.fn();
 
       controller.command('autolevel:applyProbeCompensation', {
-        gcode: 'G1 X0 Y0 F100',
+        gcode: 'G1 X0 Y0 Z0 F100',
         probeData: [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0 },
@@ -881,23 +1030,561 @@ describe('GrblController', () => {
       }, callback);
 
       expect(callback).toHaveBeenCalledWith(null, {
-        compensatedGcode: 'G1 F100 X0.000 Y0.000 Z0.000',
+        compensatedGcode: '; cncjs-autolevel-applied\n; cncjs-autolevel-reference-z=0.000000\nG1 F100 X0.000 Y0.000 Z0.000',
       });
     });
 
-    test('autolevel:applyProbeCompensation passes gcode through when probe data is insufficient', () => {
+    test('autolevel:applyProbeCompensation reports an error when probe data is insufficient', () => {
       const { controller } = setup();
       const callback = jest.fn();
 
       controller.command('autolevel:applyProbeCompensation', {
-        gcode: 'G1 X0 Y0 F100',
+        gcode: 'G1 X0 Y0 Z0 F100',
         probeData: [
           { x: 0, y: 0, z: 0 },
           { x: 10, y: 0, z: 0 },
         ],
       }, callback);
 
-      expect(callback).toHaveBeenCalledWith(null, { compensatedGcode: 'G1 X0 Y0 F100' });
+      expect(callback).toHaveBeenCalledWith('At least 3 valid probe points are required');
+    });
+
+    const pointParams = (overrides = {}) => ({
+      startX: 0,
+      endX: 0,
+      stepX: 1,
+      startY: 0,
+      endY: 0,
+      stepY: 1,
+      clearanceZ: 5,
+      startZ: 1,
+      endZ: -2,
+      feedrate: 150,
+      fineFeedrate: 30,
+      probeRetract: 1,
+      probeHeight: 1.5,
+      ...overrides,
+    });
+
+    const emitPrb = (controller, z, result = 1) => {
+      const node = controller.probeState.probePoints[controller.probeState.probedPositions.length] || { x: 0, y: 0 };
+      const reportInches = controller.runner.settings?.settings?.$13 === '1';
+      const report = (mm) => (reportInches ? mm / 25.4 : mm);
+      const x = report(Number(node.x)).toFixed(4);
+      const y = report(Number(node.y)).toFixed(4);
+      controller.runner.state.status = {
+        mpos: { x, y, z: '0.000' },
+        wpos: { x, y, z: '0.000' },
+      };
+      controller.runner.emit('parameters', {
+        raw: `[PRB:${x},${y},${z}:${result}]`,
+        name: 'PRB',
+        value: { result, x, y, z: String(z) },
+      });
+    };
+
+    const stepFeeder = (controller) => {
+      controller.feeder.unhold();
+      controller.runner.parse('ok');
+    };
+
+    test('only the fine contact is stored for one grid point', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      emitPrb(controller, -0.4);
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.probePhase).toBe('fine');
+
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
+      expect(controller.probeState.probedPositions).toEqual([
+        { x: HOMED_MPOS, y: HOMED_MPOS, z: 0 },
+      ]);
+      expect(controller.probeState.probePhase).toBe(null);
+    });
+
+    test('N grid points store N measurements', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', pointParams({
+        endX: 10,
+        stepX: 10,
+      }));
+
+      emitPrb(controller, 5);
+      emitPrb(controller, 1);
+      emitPrb(controller, 8);
+      emitPrb(controller, 2);
+
+      expect(controller.probeState.probedPositions).toHaveLength(2);
+      expect(controller.probeState.probedPositions.map(point => point.z)).toEqual([0, 1]);
+    });
+
+    test('the coarse probe uses Probe Feed and the fine probe uses Fine Probe Feed', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+      reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
+      controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
+
+      const lines = writes.map(write => write.data);
+      const coarse = lines.indexOf('G38.2 Z-2 F150\n');
+      const fine = lines.indexOf('G38.2 Z-1 F30\n');
+      const absolute = lines.indexOf('G90\n', lines.indexOf('G91\n'));
+      expect(coarse).toBeGreaterThan(-1);
+      expect(absolute).toBeGreaterThan(lines.indexOf('G91\n'));
+      expect(fine).toBeGreaterThan(absolute);
+      expect(lines).not.toContain('G38.2 Z-2 F30\n');
+    });
+
+    test('the configured retract is the lift between the two touches', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams({ probeRetract: 0.4 }));
+      flushFeeder(controller);
+
+      const lines = writes.map(write => write.data);
+      const relative = lines.indexOf('G91\n');
+      expect(lines[relative + 1]).toBe('G0 Z0.4\n');
+      expect(lines[relative + 2]).toBe('G4 P0\n');
+      expect(lines[relative + 3]).toBe('G90\n');
+      expect(lines[relative + 4]).toBe('?');
+      expect(lines).not.toContain('G38.2 Z-0.6 F30\n');
+    });
+
+    test('probe height is subtracted from the second trigger only', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', pointParams({ probeHeight: 1.5 }));
+
+      emitPrb(controller, 5);
+      expect(controller.probeState.probedPositions).toEqual([]);
+
+      emitPrb(controller, 2);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(0.5, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+    });
+
+    test('a failed coarse probe does not run the fine probe or save a point', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      while (!writes.some(write => write.data === 'G38.2 Z-2 F150\n')) {
+        stepFeeder(controller);
+      }
+      const sent = writes.length;
+
+      emitPrb(controller, -1, 0);
+
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.probePhase).toBe(null);
+      expect(controller.feeder.size()).toBe(0);
+      stepFeeder(controller);
+      expect(writes).toHaveLength(sent);
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1.5 F30\n');
+      expect(writes.map(write => write.data)).not.toContain('\x18');
+    });
+
+    test('a failed fine probe does not save the coarse measurement', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      emitPrb(controller, -0.4);
+      emitPrb(controller, -1, 0);
+
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.probePhase).toBe(null);
+      emitPrb(controller, -0.2);
+      expect(controller.probeState.probedPositions).toEqual([]);
+    });
+
+    test('one grid point increments progress once', () => {
+      const { controller, socketEvents } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      emitPrb(controller, -0.4);
+      expect(socketEvents.filter(({ event }) => event === 'autolevel:update')).toHaveLength(0);
+
+      emitPrb(controller, -0.25);
+      const updates = socketEvents.filter(({ event }) => event === 'autolevel:update');
+      expect(updates).toHaveLength(1);
+      expect(updates[0].args[0].current).toBe(1);
+      expect(updates[0].args[0].total).toBe(1);
+    });
+
+    test('a finished grid emits autolevel:complete once', () => {
+      const { controller, socketEvents } = setup();
+      controller.command('autolevel:start', pointParams({ endX: 10, stepX: 10 }));
+
+      emitPrb(controller, 1);
+      emitPrb(controller, 1);
+      expect(socketEvents.filter(({ event }) => event === 'autolevel:complete')).toHaveLength(0);
+
+      emitPrb(controller, 1);
+      emitPrb(controller, 1);
+      expect(socketEvents.filter(({ event }) => event === 'autolevel:complete')).toHaveLength(1);
+      expect(controller.probeState.probedPositions).toHaveLength(2);
+    });
+
+    test('inch probe settings stay in inches on the wire and millimetres in the map', () => {
+      const { controller, writes } = setup();
+      setUnitsG20(controller);
+      controller.command('autolevel:start', pointParams({
+        clearanceZ: 0.5,
+        startZ: 0.1,
+        endZ: -0.2,
+        feedrate: 6,
+        fineFeedrate: 1.5,
+        probeRetract: 0.04,
+        probeHeight: 0.05,
+      }));
+      flushFeeder(controller);
+
+      const lines = writes.map(write => write.data);
+      expect(lines).toContain('G38.2 Z-0.2 F6\n');
+      expect(lines).toContain('G0 Z0.04\n');
+      expect(lines).toContain('G90\n');
+      expect(lines).not.toContain('G38.2 Z-0.06 F1.5\n');
+      expect(controller.probeState.probeHeightMm).toBeCloseTo(1.27, 6);
+
+      controller.runner.settings = { settings: { $13: '1' } };
+      emitPrb(controller, 0.2);
+      emitPrb(controller, 0.15);
+
+      expect(controller.probeState.probedPositions).toHaveLength(1);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(2.54, 6);
+      expect(controller.probeState.probedPositions[0].z).toBeCloseTo(0, 6);
+    });
+
+    test('stopping mid-cycle clears the phase so the next run starts clean', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+      emitPrb(controller, -0.4);
+      expect(controller.probeState.probePhase).toBe('fine');
+
+      controller.command('autolevel:stop');
+
+      expect(writes.map(write => write.data)).toContain('\x18');
+      expect(controller.probeState).toEqual({
+        probedPositions: [],
+        probePoints: [],
+        minZ: null,
+        maxZ: null,
+        config: null,
+        probePhase: null,
+        awaitingProbeRelease: false,
+        probeReleaseClosedOnce: false,
+        distanceModeRestorePending: false,
+        touchZero: null,
+        fineCommandOpen: false,
+        coarseTriggerZ: null,
+        referenceX: null,
+        referenceY: null,
+        referenceSurfaceZ: null,
+        cuttingZeroX: null,
+        cuttingZeroY: null,
+        cuttingZeroMachineX: null,
+        cuttingZeroMachineY: null,
+        xyReference: null,
+        machineReference: null,
+      });
+
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.probedPositions).toEqual([]);
+
+      controller.command('autolevel:start', pointParams());
+      expect(controller.probeState.probePhase).toBe('coarse');
+      emitPrb(controller, -0.4);
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.referenceSurfaceZ).toBeCloseTo(-1.75, 6);
+      expect(controller.probeState.probedPositions).toEqual([
+        { x: HOMED_MPOS, y: HOMED_MPOS, z: 0 },
+      ]);
+      expect(controller.probeState.probePhase).toBe(null);
+    });
+
+    const reachReleaseCheck = (controller, writes) => {
+      let guard = 0;
+      while (!writes.some(write => write.data === '?') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      controller.ready = true;
+      controller.initialized = true;
+    };
+
+    test('the fine probe is a short absolute search after G90 is restored', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams({ probeRetract: 1 }));
+      reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
+      controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
+
+      const lines = writes.map(write => write.data);
+      const lift = lines.indexOf('G91\n');
+      expect(lines[lift + 1]).toBe('G0 Z1\n');
+      expect(lines[lift + 3]).toBe('G90\n');
+      // Coarse contact Z0, retract 1: search 2 mm, target Z-1. The Idle
+      // report at Z2 must not be used.
+      expect(lines).toContain('G38.2 Z-1 F30\n');
+      expect(lines).not.toContain('G38.2 Z0.5 F30\n');
+      expect(lines.indexOf('G90\n', lift)).toBeLessThan(lines.indexOf('G38.2 Z-1 F30\n'));
+      expect(fineTravel(1)).toBe(1.5);
+      expect(fineTravel(1)).toBeLessThan(1 - (-2));
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+    });
+
+    test('the fine target is clamped to the original coarse end Z', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams({
+        probeRetract: 1,
+        startZ: 2,
+        endZ: -0.5,
+      }));
+      reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
+      controller.runner.parse('<Idle|MPos:0.000,0.000,1.000|FS:0,0>');
+
+      expect(writes.map(write => write.data)).toContain('G38.2 Z-0.5 F30\n');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1 F30\n');
+    });
+
+    test('a probe pin that stays closed after retract is not a fine measurement', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+      emitPrb(controller, -0.4);
+      reachReleaseCheck(controller, writes);
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Pn:P>');
+      expect(controller.probeState.probePhase).toBe('fine');
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(writes.filter(write => write.data === '?')).toHaveLength(2);
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0|Pn:P>');
+      expect(controller.probeState.probePhase).toBe(null);
+      expect(controller.probeState.awaitingProbeRelease).toBe(false);
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1.4 F30\n');
+
+      const g91 = writes.map(write => write.data).indexOf('G91\n');
+      const g90 = writes.map(write => write.data).indexOf('G90\n', g91);
+      expect(g90).toBeGreaterThan(g91);
+
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.probedPositions).toEqual([]);
+
+      controller.command('gcode', ['G0 X1']);
+      expect(writes[writes.length - 1].data).toBe('G0 X1\n');
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+    });
+
+    test('an open probe pin after retract allows the short fine search', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+      reachReleaseCheck(controller, writes);
+      emitPrb(controller, 0);
+
+      controller.runner.parse('<Run|MPos:0.000,0.000,2.000|FS:100,0|Pn:P>');
+      expect(writes.map(write => write.data)).not.toContain('G38.2 Z-1 F30\n');
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
+      const lines = writes.map(write => write.data);
+      const fine = lines.indexOf('G38.2 Z-1 F30\n');
+      expect(fine).toBeGreaterThan(lines.indexOf('G90\n', lines.indexOf('G91\n')));
+
+      stepFeeder(controller);
+      expect(writes.map(write => write.data)[fine + 1]).toBe('G0 Z5\n');
+    });
+
+    test('a probe alarm does not save the coarse contact', () => {
+      const { controller } = setup();
+      controller.command('autolevel:start', pointParams());
+      emitPrb(controller, -0.4);
+
+      controller.runner.parse('ALARM:4');
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.probePhase).toBe(null);
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.probedPositions).toEqual([]);
+
+      controller.command('autolevel:start', pointParams());
+      emitPrb(controller, -0.4);
+      controller.runner.parse('ALARM:5');
+      expect(controller.probeState.probedPositions).toEqual([]);
+      emitPrb(controller, -0.25);
+      expect(controller.probeState.probedPositions).toEqual([]);
+    });
+
+    test('a fine-probe alarm does not leave the next move incremental', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+      emitPrb(controller, -0.4);
+      reachReleaseCheck(controller, writes);
+      controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
+
+      const lines = writes.map(write => write.data);
+      const fine = lines.indexOf('G38.2 Z-1.4 F30\n');
+      expect(fine).toBeGreaterThan(lines.indexOf('G90\n', lines.indexOf('G91\n')));
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+
+      controller.runner.parse('ALARM:5');
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+
+      controller.ready = true;
+      controller.initialized = true;
+      controller.runner.parse('<Idle|MPos:0.000,0.000,2.000|FS:0,0>');
+      controller.command('gcode', ['G0 X2']);
+      expect(writes[writes.length - 1].data).toBe('G0 X2\n');
+      expect(writes.map(write => write.data).slice(fine)).not.toContain('G91\n');
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+    });
+
+    test('cancellation during the lift restores absolute distance', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G91\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+
+      expect(controller.runner.getModalGroup().distance).toBe('G91');
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      controller.command('autolevel:stop');
+
+      expect(writes.map(write => write.data)).toContain('\x18');
+      expect(controller.probeState.probePhase).toBe(null);
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+
+      controller.command('gcode', ['G0 X3']);
+      expect(writes[writes.length - 1].data).toBe('G0 X3\n');
+    });
+
+    test('an alarm during the lift restores G90 once the machine is idle', () => {
+      const { controller, writes } = setup();
+      controller.command('autolevel:start', pointParams());
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G91\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      controller.ready = true;
+      controller.initialized = true;
+
+      const sent = writes.length;
+      controller.runner.parse('ALARM:4');
+      expect(writes).toHaveLength(sent);
+      expect(controller.probeState.probedPositions).toEqual([]);
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+      expect(controller.runner.getModalGroup().distance).toBe('G91');
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0>');
+      expect(writes[writes.length - 1].data).toBe('G90\n');
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+    });
+
+    test('an Idle report between G91 and the retract does not inject G90', () => {
+      const { controller, writes, socketEvents } = setup();
+      controller.ready = true;
+      controller.initialized = true;
+      controller.command('autolevel:start', pointParams({ probeRetract: 1 }));
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G38.2 Z-2 F150\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      emitPrb(controller, 0);
+      expect(controller.probeState.probePhase).toBe('fine');
+
+      guard = 0;
+      while (writes[writes.length - 1].data !== 'G91\n' && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      expect(writes[writes.length - 1].data).toBe('G91\n');
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      const sent = writes.length;
+      controller.runner.parse('<Idle|MPos:0.000,0.000,1.000|FS:0,0>');
+      expect(writes).toHaveLength(sent);
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      guard = 0;
+      while (writes[writes.length - 1].data !== 'G90\n' && guard < 10) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+
+      const lines = writes.map(write => write.data);
+      const g91 = lines.lastIndexOf('G91\n');
+      expect(lines.slice(g91, g91 + 4)).toEqual([
+        'G91\n',
+        'G0 Z1\n',
+        'G4 P0\n',
+        'G90\n',
+      ]);
+      const clientG90 = socketEvents.filter(({ event, args }) => (
+        event === 'serialport:write' &&
+        args[0] === 'G90\n' &&
+        args[1] && args[1].source === WRITE_SOURCE_CLIENT
+      ));
+      expect(clientG90).toEqual([]);
+    });
+
+    test('an alarm after G91 restores G90 once, after the probe state is cleared', () => {
+      const { controller, writes, socketEvents } = setup();
+      controller.command('autolevel:start', pointParams());
+      controller.ready = true;
+      controller.initialized = true;
+
+      let guard = 0;
+      while (!writes.some(write => write.data === 'G91\n') && guard < 40) {
+        stepFeeder(controller);
+        guard += 1;
+      }
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+      expect(controller.runner.getModalGroup().distance).toBe('G91');
+
+      const sent = writes.length;
+      controller.runner.parse('ALARM:4');
+      expect(writes).toHaveLength(sent);
+      expect(controller.probeState.probePhase).toBe(null);
+      expect(controller.probeState.awaitingProbeRelease).toBe(false);
+      expect(controller.probeState.touchZero).toBe(null);
+      expect(controller.probeState.distanceModeRestorePending).toBe(true);
+
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0>');
+      controller.runner.parse('<Idle|MPos:0.000,0.000,0.000|FS:0,0>');
+
+      const clientG90 = socketEvents.filter(({ event, args }) => (
+        event === 'serialport:write' &&
+        args[0] === 'G90\n' &&
+        args[1] && args[1].source === WRITE_SOURCE_CLIENT
+      ));
+      expect(clientG90).toHaveLength(1);
+      expect(writes[writes.length - 1].data).toBe('G90\n');
+      expect(writes.filter(write => write.data === 'G90\n')).toHaveLength(2);
+      expect(controller.runner.getModalGroup().distance).toBe('G90');
+      expect(controller.probeState.distanceModeRestorePending).toBe(false);
+    });
+
+    test('zero and oversized retracts are rejected', () => {
+      const zero = setup();
+      zero.controller.command('autolevel:start', pointParams({ probeRetract: 0 }));
+      expect(zero.writes).toEqual([]);
+      expect(zero.controller.probeState.probePhase).toBe(null);
+
+      const huge = setup();
+      huge.controller.command('autolevel:start', pointParams({ probeRetract: 3 }));
+      expect(huge.writes).toEqual([]);
+      expect(huge.controller.probeState.probePhase).toBe(null);
+      expect(fineTravel(3)).toBeGreaterThan(1 - (-2));
     });
   });
 

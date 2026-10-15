@@ -21,7 +21,12 @@ class Sidebar extends PureComponent {
                 { [styles.active]: pathname.indexOf('/workspace') === 0 }
               )}
             >
-              <Link aria-label="Workspace" to="/workspace" title={i18n._('Workspace')}>
+              <Link
+                aria-label="Workspace"
+                to="/workspace"
+                title={i18n._('Workspace')}
+                className={styles.navLink}
+              >
                 <i
                   aria-hidden="true"
                   className={classNames(
@@ -30,6 +35,7 @@ class Sidebar extends PureComponent {
                     styles.iconXyz
                   )}
                 />
+                <span className={styles.label}>{i18n._('Workspace')}</span>
               </Link>
             </li>
             <li
@@ -38,7 +44,12 @@ class Sidebar extends PureComponent {
                 { [styles.active]: pathname.indexOf('/settings') === 0 }
               )}
             >
-              <Link aria-label="Settings" to="/settings" title={i18n._('Settings')}>
+              <Link
+                aria-label="Settings"
+                to="/settings"
+                title={i18n._('Settings')}
+                className={styles.navLink}
+              >
                 <i
                   aria-hidden="true"
                   className={classNames(
@@ -47,6 +58,7 @@ class Sidebar extends PureComponent {
                     styles.iconGear
                   )}
                 />
+                <span className={styles.label}>{i18n._('Settings')}</span>
               </Link>
             </li>
           </ul>

@@ -155,6 +155,29 @@ const loadGCode = (options) => new Promise((resolve, reject) => {
     });
 });
 
+const applyAutolevelCompensation = (options) => new Promise((resolve, reject) => {
+  const {
+    gcode = '', probeData = [], normalized = false, xyReference, machineReference,
+  } = { ...options };
+
+  authrequest
+    .post('/api/autolevel/apply')
+    .send({
+      gcode,
+      probeData,
+      normalized: normalized === true,
+      xyReference,
+      machineReference,
+    })
+    .end((err, res) => {
+      if (err) {
+        reject(res);
+      } else {
+        resolve(res);
+      }
+    });
+});
+
 const fetchGCode = (options) => new Promise((resolve, reject) => {
   const { port = '' } = { ...options };
 
@@ -712,6 +735,19 @@ machines.delete = (id) => new Promise((resolve, reject) => {
     });
 });
 
+const exitKiosk = () => new Promise((resolve, reject) => {
+  authrequest
+    .post('/api/system/exit-kiosk')
+    .send({})
+    .end((err, res) => {
+      if (err) {
+        reject(res);
+      } else {
+        resolve(res);
+      }
+    });
+});
+
 machines.run = (id) => new Promise((resolve, reject) => {
   authrequest
     .post('/api/machines/run/' + id)
@@ -741,6 +777,9 @@ export default {
   fetchGCode,
   downloadGCode,
 
+  // Autolevel
+  applyAutolevelCompensation,
+
   // Authentication
   signin,
 
@@ -757,4 +796,6 @@ export default {
   macros,
   mdi,
   users,
+
+  exitKiosk,
 };

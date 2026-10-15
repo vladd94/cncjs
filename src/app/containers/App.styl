@@ -1,5 +1,9 @@
 @import "variables";
 
+.app-shell {
+    min-height: 100%;
+}
+
 .sidebar {
     background-color: $sidebar-background-color;
     position: fixed;
@@ -23,4 +27,152 @@
 .content {
     position: relative;
     background-color: $content-background-color;
+}
+
+@media (max-width: 1100px) {
+    // Keep paints cheap for Raspberry Pi / older Chromium: solid colors only,
+    // no backdrop-filter, no multi-layer gradients, no soft shadows.
+    :global(html.cncjs-mobile) {
+        --cnc-bg-0: #e8eef4;
+        --cnc-surface: #ffffff;
+        --cnc-ink: #142033;
+        --cnc-muted: #5b6b7c;
+        --cnc-accent: #0f766e;
+        --cnc-accent-soft: #d7f3ef;
+        --cnc-nav: #0f1724;
+        --cnc-nav-ink: #e8eef5;
+        --cnc-border: #cfd8e3;
+        --cnc-header-h: 52px;
+        --cnc-bottom-nav-h: 64px;
+        --cnc-machine-bar-h: 76px;
+        --cnc-pane-switch-h: 52px;
+        --cnc-top-chrome-h: 128px;
+        --cnc-radius: 10px;
+        --cnc-font: "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+        --cnc-display: "Segoe UI", "Helvetica Neue", Helvetica, sans-serif;
+
+        body {
+            font-family: var(--cnc-font);
+            color: var(--cnc-ink);
+            background: var(--cnc-bg-0);
+        }
+
+        .navbar.navbar-inverse.navbar-fixed-top {
+            min-height: var(--cnc-header-h);
+            background: #0f1724 !important;
+            border: 0 !important;
+        }
+
+        .navbar-brand {
+            font-family: var(--cnc-display);
+        }
+    }
+
+    .sidebar {
+        top: auto;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        width: 100%;
+        height: var(--cnc-bottom-nav-h, 64px);
+        padding-bottom: env(safe-area-inset-bottom, 0);
+        background: var(--cnc-nav, #0f1724);
+        border-top: 1px solid #243044;
+        z-index: 1100;
+    }
+
+    .main {
+        top: var(--cnc-header-h, 52px);
+        left: 0;
+        right: 0;
+        bottom: calc(var(--cnc-bottom-nav-h, 64px) + env(safe-area-inset-bottom, 0px));
+        min-width: 0;
+        background: var(--cnc-bg-0, #e8eef4);
+        overflow: auto;
+    }
+
+    .content {
+        background: transparent;
+        min-height: 100%;
+    }
+}
+
+// Phone landscape only. --cnc-top-chrome-h matches the machine row (38px)
+// plus the View / Controls / Tools row (39px).
+// Bottom nav is a floating overlay, so it reserves no layout height.
+// --cnc-viz-chrome-h is the visualizer title + toolbar + pane gap.
+@media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+    :global(html.cncjs-mobile) {
+        --cnc-header-h: 40px;
+        --cnc-bottom-nav-h: 0;
+        --cnc-top-chrome-h: 77px;
+        --cnc-viz-chrome-h: 88px;
+        height: 100vh;
+        height: 100dvh;
+
+        :global(.navbar.navbar-inverse.navbar-fixed-top) {
+            height: var(--cnc-header-h);
+            min-height: var(--cnc-header-h);
+            display: flex;
+            align-items: center;
+            flex-wrap: nowrap;
+            padding-left: env(safe-area-inset-left, 0px);
+            padding-right: env(safe-area-inset-right, 0px);
+        }
+
+        :global(.navbar-header) {
+            float: none;
+            display: flex;
+            align-items: center;
+            height: var(--cnc-header-h);
+        }
+
+        :global(.navbar-collapse) {
+            flex: 1 1 auto;
+            width: auto;
+            min-height: 0;
+            margin: 0;
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+        }
+    }
+
+    .app-shell {
+        height: 100%;
+        min-height: 100%;
+    }
+
+    .sidebar {
+        top: auto;
+        left: auto;
+        right: calc(8px + env(safe-area-inset-right, 0px));
+        bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+        width: auto;
+        height: auto;
+        padding: 2px;
+        border-top: 0;
+        border-radius: 10px;
+        z-index: 1200;
+    }
+
+    .main {
+        bottom: 0;
+        padding-left: env(safe-area-inset-left, 0px);
+        padding-right: env(safe-area-inset-right, 0px);
+    }
+
+    .content {
+        height: 100%;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    // Keep shared dropdown menus inside the short viewport. The menu stays
+    // anchored to its button and scrolls when it is taller than the space below.
+    :global([class*="dropdown-menu"]) {
+        max-height: calc(100dvh - 200px);
+        overflow-y: auto;
+    }
 }

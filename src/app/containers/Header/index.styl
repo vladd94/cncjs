@@ -17,6 +17,11 @@
     }
 }
 
+.brand {
+    height: 50px;
+    width: 60px;
+}
+
 .nav-dropdown-toggle {
   &&& {
     min-width: 0;
@@ -48,6 +53,108 @@
         // Remove the outline on buttons
         button:focus {
             outline: 0;
+        }
+    }
+}
+
+@media (max-width: 1100px) {
+    :global {
+        .navbar-inverse .navbar-toggle {
+            border-color: rgba(255, 255, 255, 0.18);
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+
+        .navbar-inverse .navbar-collapse {
+            border-color: rgba(255, 255, 255, 0.08);
+            background: rgba(15, 23, 36, 0.98);
+            max-height: none;
+        }
+    }
+
+    .quick-access-toolbar {
+        margin: 8px 0;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+
+        :global {
+            .btn-group {
+                float: none;
+                display: inline-flex;
+                margin-right: 8px;
+            }
+
+            // Homing/Sleep/Unlock/Reset live in the sticky workspace bar on mobile.
+            .btn-group:nth-child(2) {
+                display: none;
+            }
+
+            .btn {
+                height: 44px;
+                min-width: 44px;
+                border-radius: 10px;
+                font-family: var(--cnc-font, inherit);
+                font-weight: 600;
+            }
+        }
+    }
+
+    .nav-dropdown-toggle {
+        &&& {
+            min-width: 44px;
+            min-height: 44px;
+            color: rgba(232, 238, 245, 0.85);
+
+            &:hover > * {
+                color: #fff;
+            }
+        }
+    }
+}
+
+@media (max-width: 1100px) and (orientation: landscape) and (max-height: 600px) {
+    :global(.navbar-brand).brand,
+    :global(.navbar-header) {
+        display: none;
+    }
+
+    .nav-dropdown-toggle {
+        &&& {
+            display: none;
+        }
+    }
+
+    .quick-access-toolbar {
+        position: absolute;
+        top: 4px;
+        left: calc(8px + env(safe-area-inset-left, 0px));
+        width: auto;
+        margin: 0;
+        z-index: 2;
+
+        :global {
+            .nav {
+                margin: 0;
+                float: none;
+            }
+
+            .btn-group {
+                float: none;
+            }
+
+            .btn {
+                height: 32px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+        }
+    }
+
+    :global {
+        .navbar-inverse .navbar-toggle {
+            display: none;
         }
     }
 }

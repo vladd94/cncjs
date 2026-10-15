@@ -249,7 +249,9 @@ class Visualizer extends Component {
 
       // Enable or disable 3D view
       if ((prevProps.show !== this.props.show) && (this.props.show === true)) {
-        this.viewport.update();
+        if (this.viewport) {
+          this.viewport.update();
+        }
 
         // Set forceUpdate to true when enabling or disabling 3D view
         forceUpdate = true;
@@ -410,6 +412,13 @@ class Visualizer extends Component {
       const tokens = [
         pubsub.subscribe('resize', (msg) => {
           this.resizeRenderer();
+          // A pane that was display:none can still report 0 size in the same
+          // turn it becomes visible. Draw again after layout.
+          if (!this.isRendererVisible()) {
+            requestAnimationFrame(() => {
+              this.resizeRenderer();
+            });
+          }
         }),
         pubsub.subscribe('autolevel:showProbeVisualization', (msg, data) => {
           this.showProbeVisualization(data);
@@ -578,6 +587,29 @@ class Visualizer extends Component {
 
     getVisibleHeight() {
       const clientHeight = document.documentElement.clientHeight;
+      const isMobile = document.documentElement.classList.contains('cncjs-mobile');
+      if (isMobile) {
+        const shortLandscape = window.matchMedia(
+          '(max-width: 1100px) and (orientation: landscape) and (max-height: 600px)'
+        ).matches;
+        if (shortLandscape) {
+          // Read the compact chrome from App.styl so the canvas fills the
+          // leftover viewport instead of the tall portrait stack.
+          const styles = window.getComputedStyle(document.documentElement);
+          const px = (name, fallback) => {
+            const value = parseFloat(styles.getPropertyValue(name));
+            return Number.isFinite(value) ? value : fallback;
+          };
+          const reserved = px('--cnc-header-h', 40) +
+            px('--cnc-top-chrome-h', 77) +
+            px('--cnc-viz-chrome-h', 88);
+          return Math.max(180, clientHeight - reserved);
+        }
+        // Header + machine bar + pane switch + bottom nav + visualizer chrome.
+        // Cap height for low-power GPUs (e.g. Pi panels at 1024×600).
+        const chrome = 52 + 76 + 52 + 64 + 76;
+        return Math.min(360, Math.max(200, clientHeight - chrome));
+      }
       const navbarHeight = 50;
       const widgetHeaderHeight = 38;
       const widgetFooterHeight = 38;
@@ -586,6 +618,15 @@ class Visualizer extends Component {
       );
 
       return visibleHeight;
+    }
+
+    isRendererVisible() {
+      const el = this.renderer && this.renderer.domElement;
+      if (!el || !el.isConnected) {
+        return false;
+      }
+      // Hidden mobile panes use display:none; skip WebGL work while off-screen.
+      return el.offsetWidth > 0 && el.offsetHeight > 0;
     }
 
     addResizeEventListener() {
@@ -598,6 +639,10 @@ class Visualizer extends Component {
 
     resizeRenderer() {
       if (!(this.camera && this.renderer)) {
+        return;
+      }
+
+      if (!this.isRendererVisible()) {
         return;
       }
 
@@ -624,6 +669,10 @@ class Visualizer extends Component {
       if (!this.viewport) {
         // Defaults to 300x300mm
         this.viewport = new Viewport(this.camera, CAMERA_VIEWPORT_WIDTH, CAMERA_VIEWPORT_HEIGHT);
+      } else if (this.viewport.pendingFit) {
+        // A fit requested while the canvas had no size (hidden pane) can
+        // apply now that the camera aspect is real.
+        this.viewport.update();
       }
 
       this.controls.handleResize();
@@ -860,13 +909,14 @@ class Visualizer extends Component {
       const width = this.getVisibleWidth();
       const height = this.getVisibleHeight();
 
-      // WebGLRenderer
+      // WebGLRenderer — keep Pi / mobile shell cheap (no MSAA, no soft shadows).
+      const lowPower = document.documentElement.classList.contains('cncjs-mobile');
       this.renderer = new THREE.WebGLRenderer({
         autoClearColor: true,
-        antialias: true,
+        antialias: !lowPower,
         alpha: true
       });
-      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.enabled = !lowPower;
       this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       this.renderer.setClearColor(new THREE.Color(colornames('white')), 1);
       this.renderer.setPixelRatio(getRenderPixelRatio());
@@ -1021,7 +1071,7 @@ class Visualizer extends Component {
       const { forceUpdate = false } = { ...options };
       const needUpdateScene = this.props.show || forceUpdate;
 
-      if (this.renderer && needUpdateScene) {
+      if (this.renderer && needUpdateScene && this.isRendererVisible()) {
         this.renderer.render(this.scene, this.camera);
       }
     }
@@ -1270,16 +1320,19 @@ class Visualizer extends Component {
       this.updateLimitsPosition();
       this.updateProbeVisualizationPosition();
 
-      if (this.viewport && dX > 0 && dY > 0) {
-        // The minimum viewport is 50x50mm
+      if (this.viewport && (dX > 0 || dY > 0)) {
+        // The minimum viewport is 50x50mm. A path that is flat in X or Y
+        // (a G18/G19 arc seen from above) still needs a fit.
         const width = Math.max(dX, 50);
         const height = Math.max(dY, 50);
         const target = new THREE.Vector3(0, 0, bbox.max.z);
         this.viewport.set(width, height, target);
       }
 
-      // Update the scene
-      this.updateScene();
+      // Paint even while the "3D rendering" overlay has hidden the canvas.
+      // A normal updateScene() bails out in that moment and the old probe
+      // frame stays on screen.
+      this.updateScene({ forceUpdate: true });
 
       (typeof callback === 'function') && callback({ bbox: bbox });
     }

@@ -270,6 +270,9 @@ const appMain = () => {
     app.get(urljoin(settings.route, 'api/gcode/download'), api.gcode.download);
     app.post(urljoin(settings.route, 'api/gcode/download'), api.gcode.download); // Alias
 
+    // Autolevel (port-independent compensation)
+    app.post(urljoin(settings.route, 'api/autolevel/apply'), api.autolevel.apply);
+
     // Controllers
     app.get(urljoin(settings.route, 'api/controllers'), api.controllers.get);
 
@@ -316,6 +319,9 @@ const appMain = () => {
     app.get(urljoin(settings.route, 'api/users/:id'), api.users.read);
     app.put(urljoin(settings.route, 'api/users/:id'), api.users.update);
     app.delete(urljoin(settings.route, 'api/users/:id'), api.users.__delete);
+
+    // Close the local Chromium kiosk. Loopback only; does not touch the CNC.
+    app.post(urljoin(settings.route, 'api/system/exit-kiosk'), api.kiosk.exitKiosk);
 
     // Watch
     app.get(urljoin(settings.route, 'api/watch/status'), api.watch.getStatus);

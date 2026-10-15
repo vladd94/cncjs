@@ -25,6 +25,8 @@ class Probe extends PureComponent {
         probeCommand,
         probeDepth,
         probeFeedrate,
+        fineFeedrate,
+        probeRetract,
         touchPlateHeight,
         retractionDistance
       } = state;
@@ -185,6 +187,44 @@ class Probe extends PureComponent {
                 </div>
               </div>
             </div>
+            {probeAxis === 'Z' && (
+              <div className="col-xs-6" style={{ paddingRight: 5 }}>
+                <div className="form-group">
+                  <label className="control-label">{i18n._('Fine Probe Feed')}</label>
+                  <div className="input-group input-group-sm">
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={fineFeedrate}
+                      placeholder="0.00"
+                      min={0}
+                      step={step}
+                      onChange={actions.handleFineFeedrateChange}
+                    />
+                    <span className="input-group-addon">{feedrateUnits}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+            {probeAxis === 'Z' && (
+              <div className="col-xs-6" style={{ paddingLeft: 5 }}>
+                <div className="form-group">
+                  <label className="control-label">{i18n._('Probe Retract')}</label>
+                  <div className="input-group input-group-sm">
+                    <input
+                      type="number"
+                      className="form-control"
+                      value={probeRetract}
+                      placeholder="0.00"
+                      min={0}
+                      step={step}
+                      onChange={actions.handleProbeRetractChange}
+                    />
+                    <span className="input-group-addon">{displayUnits}</span>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="col-xs-6" style={{ paddingRight: 5 }}>
               <div className="form-group">
                 <label className="control-label">{i18n._('Touch Plate Thickness')}</label>

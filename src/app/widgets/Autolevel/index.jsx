@@ -55,6 +55,7 @@ import {
   PROCESSING_PHASE_LOADING,
 } from './constants';
 import styles from './index.styl';
+import { homeRelativePoint, readProbeSurfaceFile, serializeProbeSurfaceFile } from './probeFile';
 
 class AutolevelWidget extends PureComponent {
   static propTypes = {
@@ -136,7 +137,7 @@ class AutolevelWidget extends PureComponent {
       // Open file dialog
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.probe';
+      // Do not filter by extension: mobile file providers may not recognize .probe.
       input.onchange = (event) => {
         const file = event.target.files[0];
         if (!file) {
@@ -149,14 +150,15 @@ class AutolevelWidget extends PureComponent {
           const data = e.target.result;
           this.actions.handleProbeFileLoaded(filepath, data);
         };
+        reader.onerror = () => this.setState({ probeFileError: i18n._('Failed to read file') });
         reader.readAsText(file);
       };
       input.click();
     },
     handleProbeFileLoaded: (filepath, data) => {
       try {
-        const lines = data.split('\n').filter(line => line.trim().length > 0);
-        const probedPositions = [];
+        const surface = readProbeSurfaceFile(data);
+        const probedPositions = surface.points;
         let minZ = Infinity;
         let maxZ = -Infinity;
         let minX = Infinity;
@@ -164,24 +166,26 @@ class AutolevelWidget extends PureComponent {
         let minY = Infinity;
         let maxY = -Infinity;
 
-        lines.forEach(line => {
-          const values = line.trim().split(/\s+/).map(Number);
-          const [x, y, z] = values;
-          if (!Number.isNaN(x) && !Number.isNaN(y) && !Number.isNaN(z)) {
-            probedPositions.push({ x, y, z });
-            minZ = Math.min(z, minZ);
-            maxZ = Math.max(z, maxZ);
-            minX = Math.min(x, minX);
-            maxX = Math.max(x, maxX);
-            minY = Math.min(y, minY);
-            maxY = Math.max(y, maxY);
-          }
+        probedPositions.forEach(({ x, y, z }) => {
+          minZ = Math.min(z, minZ);
+          maxZ = Math.max(z, maxZ);
+          minX = Math.min(x, minX);
+          maxX = Math.max(x, maxX);
+          minY = Math.min(y, minY);
+          maxY = Math.max(y, maxY);
         });
 
         this.setState({
           wizardView: VIEW_APPLY,
           probeFileName: filepath,
+          probeFileError: '',
+          gcodeApplied: false,
           probedPositions,
+          probeMapNormalized: surface.normalized === true,
+          probeMapLegacy: surface.normalized !== true,
+          probeMapHeightMm: surface.probeHeightMm,
+          probeXyReference: surface.xyReference,
+          probeMachineReference: surface.machineReference,
           probeStats: {
             points: probedPositions.length,
             minZ,
@@ -194,13 +198,32 @@ class AutolevelWidget extends PureComponent {
         // 3D visualizer. The bounds are derived from the data itself (min/max
         // of loaded X/Y values). interactable:false because the user is in the
         // Apply view and should not be able to modify the probe area.
+        const displayPositions = surface.xyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, surface.machineReference))
+          : probedPositions;
+        let viewMinX = minX;
+        let viewMaxX = maxX;
+        let viewMinY = minY;
+        let viewMaxY = maxY;
+        if (surface.xyReference === 'machine') {
+          viewMinX = Infinity;
+          viewMaxX = -Infinity;
+          viewMinY = Infinity;
+          viewMaxY = -Infinity;
+          displayPositions.forEach(({ x, y }) => {
+            viewMinX = Math.min(x, viewMinX);
+            viewMaxX = Math.max(x, viewMaxX);
+            viewMinY = Math.min(y, viewMinY);
+            viewMaxY = Math.max(y, viewMaxY);
+          });
+        }
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: {
-            startX: minX,
-            startY: minY,
-            endX: maxX,
-            endY: maxY,
+            startX: viewMinX,
+            startY: viewMinY,
+            endX: viewMaxX,
+            endY: viewMaxY,
             units: this.state.units,
             snapX: this.state.stepX / 2,
             snapY: this.state.stepY / 2,
@@ -210,6 +233,7 @@ class AutolevelWidget extends PureComponent {
 
         log.info(`Loaded ${probedPositions.length} points from ${filepath}`);
       } catch (err) {
+        this.setState({ probeFileError: err.message });
         log.error('Error loading probe file:', err);
       }
     },
@@ -222,6 +246,9 @@ class AutolevelWidget extends PureComponent {
         probedPositions: [], // Clear probe data
         probeStats: null, // Clear probe stats
         probeFileName: '',
+        probeMapNormalized: false,
+        probeMapLegacy: false,
+        probeMapHeightMm: null,
         gcodeApplied: false,
         modal: {
           name: MODAL_NONE,
@@ -240,10 +267,13 @@ class AutolevelWidget extends PureComponent {
       // Entering the Apply view after a completed probe run — show the collected
       // probe points for reference. interactable:false because the probe area
       // should not be editable from the Apply view.
-      const { probedPositions, startX, startY, endX, endY, units, stepX, stepY } = this.state;
+      const { probedPositions, startX, startY, endX, endY, units, stepX, stepY, probeXyReference, probeMachineReference } = this.state;
       if (probedPositions.length > 0) {
+        const displayPositions = probeXyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, probeMachineReference))
+          : probedPositions;
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units, snapX: stepX / 2, snapY: stepY / 2, interactable: false },
         });
       }
@@ -319,6 +349,15 @@ class AutolevelWidget extends PureComponent {
     handleProbeFeedrateChange: (event) => {
       this.setState({ feedrate: this.parseInputValue(event.target.value) });
     },
+    handleFineFeedrateChange: (event) => {
+      this.setState({ fineFeedrate: this.parseInputValue(event.target.value) });
+    },
+    handleProbeRetractChange: (event) => {
+      this.setState({ probeRetract: this.parseInputValue(event.target.value) });
+    },
+    handleProbeHeightChange: (event) => {
+      this.setState({ probeHeight: this.parseInputValue(event.target.value) });
+    },
 
     // Probe operations
     showTestProbeConfirmation: () => {
@@ -348,7 +387,7 @@ class AutolevelWidget extends PureComponent {
         startX, endX, stepX,
         startY, endY, stepY,
         clearanceZ, startZ, endZ,
-        feedrate,
+        feedrate, fineFeedrate, probeRetract, probeHeight, units,
       } = this.state;
       // Calculate total points
       const numPointsX = Math.floor((endX - startX) / stepX) + 1;
@@ -364,6 +403,9 @@ class AutolevelWidget extends PureComponent {
           total: totalPoints,
           percentage: 0,
         },
+        probeMapNormalized: true,
+        probeMapLegacy: false,
+        probeMapHeightMm: units === IMPERIAL_UNITS ? in2mm(probeHeight) : Number(probeHeight),
       });
 
       // Probing has started — the interactive probe area overlay is no longer
@@ -385,6 +427,9 @@ class AutolevelWidget extends PureComponent {
         startZ,
         endZ,
         feedrate,
+        fineFeedrate,
+        probeRetract,
+        probeHeight,
       });
 
       log.info('Starting probe sequence');
@@ -407,12 +452,13 @@ class AutolevelWidget extends PureComponent {
 
     // Probe data management
     saveProbeData: () => {
-      const { probedPositions, probeFileName } = this.state;
-      const data = probedPositions.map(({ x, y, z }) => {
-        const a = 0, b = 0, c = 0;
-        const u = 0, v = 0, w = 0;
-        return `${x} ${y} ${z} ${a} ${b} ${c} ${u} ${v} ${w}`;
-      }).join('\n');
+      const { probedPositions, probeFileName, probeMapNormalized, probeMapHeightMm } = this.state;
+      const data = serializeProbeSurfaceFile(probedPositions, {
+        normalized: probeMapNormalized === true,
+        probeHeightMm: probeMapHeightMm,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
+      });
 
       const blob = new Blob([data], { type: 'text/plain' });
       const url = URL.createObjectURL(blob);
@@ -433,77 +479,90 @@ class AutolevelWidget extends PureComponent {
         onProgress(PROCESSING_PHASE_COMPENSATING);
       }
 
-      controller.command('autolevel:applyProbeCompensation', {
+      // HTTP apply does not require an open serial port (controller.command would hang).
+      api.applyAutolevelCompensation({
         gcode,
         probeData: probedPositions,
-      }, (err, result) => {
-        if (err) {
-          log.error('Error applying auto-level:', err);
-          if (onError) {
-            onError(String(err));
+        normalized: this.state.probeMapNormalized === true,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
+      })
+        .then((res) => {
+          const { compensatedGcode } = { ...res.body };
+          if (!compensatedGcode) {
+            throw new Error('Invalid compensation result');
           }
-          return;
-        }
 
-        if (!result || !result.compensatedGcode) {
-          log.error('Invalid result from compensation:', result);
-          if (onError) {
-            onError('Invalid compensation result');
+          if (onProgress) {
+            onProgress(PROCESSING_PHASE_LOADING);
           }
-          return;
-        }
 
-        const { compensatedGcode } = result;
-
-        if (onProgress) {
-          onProgress(PROCESSING_PHASE_LOADING);
-        }
-
-        // Load compensated G-code to server
-        const name = `AL_${gcodeFileName}`;
-        api.loadGCode({ port, name, gcode: compensatedGcode })
-          .then((res) => {
-            const { name: loadedName = '', gcode: loadedGcode = '' } = { ...res.body };
-            pubsub.publish('gcode:load', { name: loadedName, gcode: loadedGcode, isProbeCompensationApplied: true });
-            this.setState({ gcodeApplied: true });
-            log.info('Auto-level applied and G-code loaded to server');
-
-            if (onSuccess) {
-              onSuccess(compensatedGcode);
-            }
-          })
-          .catch((error) => {
-            log.error('Failed to load compensated G-code to server:', error);
-            if (onError) {
-              onError('Failed to load compensated G-code to workspace');
-            }
+          const name = `AL_${gcodeFileName}`;
+          const activePort = port || controller.port;
+          // Show the corrected program immediately. Waiting on the controller
+          // load left the Apply screen spinning when that request never returned.
+          pubsub.publish('gcode:load', {
+            name,
+            gcode: compensatedGcode,
+            isProbeCompensationApplied: true,
           });
-      });
+          this.setState({ gcodeApplied: true });
+          log.info('Auto-level applied and G-code loaded to workspace');
+          if (onSuccess) {
+            onSuccess(compensatedGcode);
+          }
+
+          if (activePort) {
+            api.loadGCode({ port: activePort, name, gcode: compensatedGcode })
+              .catch((error) => {
+                log.error('Failed to load compensated G-code to controller:', error);
+              });
+          }
+
+          return null;
+        })
+        .catch((error) => {
+          const message = (error && error.body && error.body.msg) ||
+            (error && error.message) ||
+            i18n._('Failed to apply probe compensation');
+          log.error('Error applying auto-level:', message);
+          if (onError) {
+            onError(String(message));
+          }
+        });
     },
     exportLevelledGcode: (gcode, gcodeFileName) => {
       const { probedPositions } = this.state;
 
-      controller.command('autolevel:applyProbeCompensation', {
+      api.applyAutolevelCompensation({
         gcode,
         probeData: probedPositions,
-      }, (err, result) => {
-        if (err) {
-          log.error('Error applying auto-level:', err);
-          return;
-        }
+        normalized: this.state.probeMapNormalized === true,
+        xyReference: this.state.probeXyReference,
+        machineReference: this.state.probeMachineReference,
+      })
+        .then((res) => {
+          const { compensatedGcode } = { ...res.body };
+          if (!compensatedGcode) {
+            throw new Error('Invalid compensation result');
+          }
 
-        const { compensatedGcode } = result;
+          const blob = new Blob([compensatedGcode], { type: 'text/plain' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `AL_${gcodeFileName}`;
+          a.click();
+          URL.revokeObjectURL(url);
 
-        const blob = new Blob([compensatedGcode], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `AL_${gcodeFileName}`;
-        a.click();
-        URL.revokeObjectURL(url);
-
-        log.info('Levelled G-code exported');
-      });
+          log.info('Levelled G-code exported');
+        })
+        .catch((error) => {
+          const message = (error && error.body && error.body.msg) ||
+            (error && error.message) ||
+            'Failed to export levelled G-code';
+          log.error('Error exporting levelled G-code:', message);
+        });
     },
     resetGcodeApplied: () => {
       this.setState({ gcodeApplied: false });
@@ -597,14 +656,21 @@ class AutolevelWidget extends PureComponent {
         startZ: mapValueToUnits(this.config.get('startZ', 5), units),
         endZ: mapValueToUnits(this.config.get('endZ', -5), units),
         feedrate: mapValueToUnits(this.config.get('feedrate', 5), units),
+        fineFeedrate: mapValueToUnits(this.config.get('fineFeedrate', 10), units),
+        probeRetract: mapValueToUnits(this.config.get('probeRetract', 1), units),
+        probeHeight: mapValueToUnits(this.config.get('probeHeight', 0), units),
       });
     },
     'autolevel:update': (data) => {
       log.debug('Received autolevel:update event', data);
-      const { current, total, probedPos, minZ, maxZ, maxDeviation } = data;
+      const { current, total, probedPos, minZ, maxZ, maxDeviation, xyReference, machineReference } = data;
 
       this.setState(state => {
         const updatedPositions = [...state.probedPositions, probedPos];
+        const reference = machineReference || state.probeMachineReference;
+        const displayPositions = (xyReference === 'machine' || state.probeXyReference === 'machine') && reference
+          ? updatedPositions.map(point => homeRelativePoint(point, reference))
+          : updatedPositions;
 
         // A new probe point was received from the controller (autolevel:update).
         // Incrementally update the 3D visualizer so the user can watch the
@@ -613,7 +679,7 @@ class AutolevelWidget extends PureComponent {
         const { startX, startY, endX, endY, units, stepX, stepY } = state;
         log.debug(`Updating visualization with point ${current}/${total}:`, probedPos);
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: updatedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units, snapX: stepX / 2, snapY: stepY / 2, interactable: false },
         });
 
@@ -630,6 +696,8 @@ class AutolevelWidget extends PureComponent {
             maxZ,
             maxDeviation,
           },
+          probeXyReference: xyReference || state.probeXyReference,
+          probeMachineReference: reference,
         };
       });
 
@@ -676,7 +744,10 @@ class AutolevelWidget extends PureComponent {
         return;
       }
 
-      const { probedPositions = [], probePoints = [], minZ, maxZ, config = {} } = result.state;
+      const {
+        probedPositions = [], probePoints = [], minZ, maxZ, config = {},
+        normalized, probeHeightMm, xyReference, machineReference,
+      } = result.state;
       log.debug('Probe state from server:', {
         probedPositions: probedPositions.length,
         probePoints: probePoints.length
@@ -704,6 +775,11 @@ class AutolevelWidget extends PureComponent {
             total: probePoints.length,
             percentage: Math.round((probedPositions.length / probePoints.length) * 100),
           },
+          probeMapNormalized: normalized === true,
+          probeMapLegacy: normalized !== true,
+          probeMapHeightMm: Number.isFinite(probeHeightMm) ? probeHeightMm : null,
+          probeXyReference: xyReference || 'work',
+          probeMachineReference: machineReference || null,
         });
 
         // Restore probe visualization after the widget reconnects to the server
@@ -713,8 +789,11 @@ class AutolevelWidget extends PureComponent {
         const { startX, startY, endX, endY } = config;
         if (startX !== undefined) {
           const interactable = wizardView === VIEW_SETUP_PROBE;
+          const displayPositions = xyReference === 'machine'
+            ? probedPositions.map(point => homeRelativePoint(point, machineReference))
+            : probedPositions;
           pubsub.publish('autolevel:showProbeVisualization', {
-            probeData: probedPositions,
+            probeData: displayPositions,
             config: { startX, startY, endX, endY, units: this.state.units, snapX: this.state.stepX / 2, snapY: this.state.stepY / 2, interactable },
           });
         }
@@ -741,10 +820,11 @@ class AutolevelWidget extends PureComponent {
   componentDidUpdate(prevProps, prevState) {
     const {
       minimized, units, wizardView, probedPositions,
+      probeXyReference, probeMachineReference,
       stepX, stepY,
       startX, startY, endX, endY,
       clearanceZ, startZ, endZ,
-      feedrate,
+      feedrate, fineFeedrate, probeRetract, probeHeight,
     } = this.state;
 
     this.config.set('minimized', minimized);
@@ -767,6 +847,9 @@ class AutolevelWidget extends PureComponent {
     this.config.set('startZ', toMetric(startZ));
     this.config.set('endZ', toMetric(endZ));
     this.config.set('feedrate', toMetric(feedrate));
+    this.config.set('fineFeedrate', toMetric(fineFeedrate));
+    this.config.set('probeRetract', toMetric(probeRetract));
+    this.config.set('probeHeight', toMetric(probeHeight));
 
     // Keep the 3D visualizer in sync whenever the probe configuration changes
     // while the user is on the Setup Probe or Probing view. Skipped on other
@@ -786,8 +869,11 @@ class AutolevelWidget extends PureComponent {
         // and resize the probe area directly in the viewport. On the Probing
         // view the overlay is read-only (probing is already in progress).
         const interactable = wizardView === VIEW_SETUP_PROBE;
+        const displayPositions = probeXyReference === 'machine'
+          ? probedPositions.map(point => homeRelativePoint(point, probeMachineReference))
+          : probedPositions;
         pubsub.publish('autolevel:showProbeVisualization', {
-          probeData: probedPositions,
+          probeData: displayPositions,
           config: { startX, startY, endX, endY, units: this.state.units, snapX: stepX / 2, snapY: stepY / 2, interactable },
         });
       }
@@ -825,12 +911,21 @@ class AutolevelWidget extends PureComponent {
       startZ: this.config.get('startZ', 5),
       endZ: this.config.get('endZ', -5),
       feedrate: this.config.get('feedrate', 25),
+      fineFeedrate: this.config.get('fineFeedrate', 10),
+      probeRetract: this.config.get('probeRetract', 1),
+      probeHeight: this.config.get('probeHeight', 0),
+      probeMapNormalized: false,
+      probeMapLegacy: false,
+      probeMapHeightMm: null,
+      probeXyReference: 'work',
+      probeMachineReference: null,
       // Probe state
       probeState: PROBE_STATE_IDLE,
       probeProgress: { current: 0, total: 0, percentage: 0 },
       probedPositions: [],
       probeStats: null,
       probeFileName: '',
+      probeFileError: '',
       // G-code state
       gcodeApplied: false,
     };
@@ -903,7 +998,7 @@ class AutolevelWidget extends PureComponent {
   }
 
   isValidNumber(value) {
-    return typeof value === 'number' && !Number.isNaN(value);
+    return typeof value === 'number' && Number.isFinite(value);
   }
 
   getValidationErrors() {
@@ -911,7 +1006,7 @@ class AutolevelWidget extends PureComponent {
       startX, startY, endX, endY,
       stepX, stepY,
       clearanceZ, startZ, endZ,
-      feedrate,
+      feedrate, fineFeedrate, probeRetract, probeHeight,
     } = this.state;
     const errors = {};
     const invalidMsg = i18n._('Must be a number');
@@ -928,6 +1023,12 @@ class AutolevelWidget extends PureComponent {
     }
     if (!this.isValidNumber(endY)) {
       errors.endY = invalidMsg;
+    }
+    if (this.isValidNumber(startX) && this.isValidNumber(endX) && endX <= startX) {
+      errors.endX = i18n._('End X must be greater than Start X');
+    }
+    if (this.isValidNumber(startY) && this.isValidNumber(endY) && endY <= startY) {
+      errors.endY = i18n._('End Y must be greater than Start Y');
     }
     if (!this.isValidNumber(stepX)) {
       errors.stepX = invalidMsg;
@@ -949,9 +1050,34 @@ class AutolevelWidget extends PureComponent {
     }
     if (!this.isValidNumber(endZ)) {
       errors.endZ = invalidMsg;
+    } else if (endZ >= startZ) {
+      errors.endZ = i18n._('End Z must be below Start Z');
     }
     if (!this.isValidNumber(feedrate)) {
       errors.feedrate = invalidMsg;
+    } else if (feedrate <= 0) {
+      errors.feedrate = positiveMsg;
+    }
+    if (!this.isValidNumber(fineFeedrate)) {
+      errors.fineFeedrate = invalidMsg;
+    } else if (fineFeedrate <= 0) {
+      errors.fineFeedrate = positiveMsg;
+    }
+    if (!this.isValidNumber(probeRetract)) {
+      errors.probeRetract = invalidMsg;
+    } else if (probeRetract <= 0) {
+      errors.probeRetract = positiveMsg;
+    } else if (
+      this.isValidNumber(startZ) &&
+      this.isValidNumber(endZ) &&
+      (probeRetract * 1.5) >= (startZ - endZ)
+    ) {
+      errors.probeRetract = i18n._('Retract is too large for the probe travel');
+    }
+    if (!this.isValidNumber(probeHeight)) {
+      errors.probeHeight = invalidMsg;
+    } else if (probeHeight < 0) {
+      errors.probeHeight = i18n._('Must be zero or greater');
     }
 
     return errors;
@@ -970,6 +1096,14 @@ class AutolevelWidget extends PureComponent {
 
     return (
       <div>
+        {this.state.probeFileError && (
+          <div className="alert alert-danger" role="alert">{this.state.probeFileError}</div>
+        )}
+        {this.state.probeMapLegacy && (
+          <div className="alert alert-warning" role="alert">
+            {i18n._('Legacy raw probe map. Z values still include the probe device, so autolevel subtracts the height at work X0 Y0.')}
+          </div>
+        )}
         {modal.name === MODAL_START_PROBE_CONFIRM && (
           <StartProbeModal
             state={state}
@@ -1021,8 +1155,7 @@ class AutolevelWidget extends PureComponent {
               <Space width="8" />
             </Widget.Sortable>
             {isForkedWidget &&
-              <i className="fa fa-code-fork" style={{ marginRight: 5 }} />
-            }
+              <i className="fa fa-code-fork" style={{ marginRight: 5 }} />}
             {i18n._('Autolevel')}
           </Widget.Title>
           <Widget.Controls className={this.props.sortable.filterClassName}>
